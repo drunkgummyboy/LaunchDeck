@@ -1,3 +1,10 @@
+<#
+   LaunchDeck.ps1
+   - Interactive GUI setup script using Windows Forms
+   - Ensures winget is installed, then installs selected apps
+   - Logs to C:\Windows\Temp\FirstLogonApps_<timestamp>.log
+#>
+
 $ErrorActionPreference = 'Stop';
 $ProgressPreference = 'SilentlyContinue';
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;
@@ -48,6 +55,26 @@ function Test-Winget {
     } catch {
         return $false;
     }
+}
+
+function Test-WingetPackageInstalled {
+    <#
+    .SYNOPSIS
+        Checks whether a package ID is already installed, via `winget list`.
+    .PARAMETER Id
+        The exact winget package ID to check for.
+    .PARAMETER WingetPath
+        Path or command name of the winget executable to use.
+    .OUTPUTS
+        [bool] True if the package is already present, otherwise false.
+    #>
+    param(
+        [string]$Id,
+        [string]$WingetPath
+    );
+
+    $listOutput = & $WingetPath list --id $Id --exact --accept-source-agreements 2>$null;
+    return ($LASTEXITCODE -eq 0) -and ($listOutput -match [regex]::Escape($Id));
 }
 
 # --- Elevation Check -----------------------------------------------------------
@@ -362,13 +389,71 @@ Add-SideButton -Name "Set Boot Name" -Code {
 };
 
 # Button 4
-Add-SideButton -Name "Placeholder 4" -Code {
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"Write-Host 'Running Placeholder 4...'; Pause`"" -Verb RunAs;
+Add-SideButton -Name "Rename Computer" -Code {
+    $RenameForm = New-Object System.Windows.Forms.Form;
+    $RenameForm.Text = "Rename Computer";
+    $RenameForm.Size = New-Object System.Drawing.Size(340, 170);
+    $RenameForm.StartPosition = "CenterParent";
+    $RenameForm.FormBorderStyle = "FixedDialog";
+    $RenameForm.MaximizeBox = $false;
+
+    $CurrentNameLabel = New-FormLabel -Text "Current name: $env:COMPUTERNAME" -X 20 -Y 20;
+    $RenameForm.Controls.Add($CurrentNameLabel);
+
+    $NewNameLabel = New-FormLabel -Text "New name:" -X 20 -Y 55;
+    $RenameForm.Controls.Add($NewNameLabel);
+
+    $NewNameBox = New-Object System.Windows.Forms.TextBox;
+    $NewNameBox.Location = New-Object System.Drawing.Point(100, 52);
+    $NewNameBox.Size = New-Object System.Drawing.Size(200, 20);
+    $NewNameBox.MaxLength = 15;
+    $RenameForm.Controls.Add($NewNameBox);
+
+    $ApplyBtn = New-Object System.Windows.Forms.Button;
+    $ApplyBtn.Text = "Apply";
+    $ApplyBtn.Location = New-Object System.Drawing.Point(80, 105);
+    $ApplyBtn.DialogResult = [System.Windows.Forms.DialogResult]::OK;
+    $RenameForm.Controls.Add($ApplyBtn);
+
+    $CancelBtn = New-Object System.Windows.Forms.Button;
+    $CancelBtn.Text = "Cancel";
+    $CancelBtn.Location = New-Object System.Drawing.Point(180, 105);
+    $CancelBtn.DialogResult = [System.Windows.Forms.DialogResult]::Cancel;
+    $RenameForm.Controls.Add($CancelBtn);
+
+    $RenameForm.AcceptButton = $ApplyBtn;
+    $RenameForm.CancelButton = $CancelBtn;
+
+    $result = $RenameForm.ShowDialog();
+
+    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
+        $newComputerName = $NewNameBox.Text.Trim();
+
+        if ([string]::IsNullOrWhiteSpace($newComputerName)) {
+            [System.Windows.Forms.MessageBox]::Show("Enter a computer name first.", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null;
+        } elseif ($newComputerName -notmatch '^[a-zA-Z0-9-]{1,15}$') {
+            [System.Windows.Forms.MessageBox]::Show("Names can only use letters, numbers, and hyphens (max 15 characters).", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null;
+        } elseif ($newComputerName -eq $env:COMPUTERNAME) {
+            [System.Windows.Forms.MessageBox]::Show("That's already the current name.", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null;
+        } else {
+            try {
+                Rename-Computer -NewName $newComputerName -Force -ErrorAction Stop;
+                $confirmRestart = [System.Windows.Forms.MessageBox]::Show("Renamed to '$newComputerName'. This needs a restart to take effect. Restart now?", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question);
+                if ($confirmRestart -eq [System.Windows.Forms.DialogResult]::Yes) {
+                    Restart-Computer -Force;
+                }
+            } catch {
+                [System.Windows.Forms.MessageBox]::Show("Rename failed: $($_.Exception.Message)", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null;
+            }
+        }
+    }
+
+    $RenameForm.Dispose();
 };
 
 # Button 5
-Add-SideButton -Name "Placeholder 5" -Code {
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"Write-Host 'Running Placeholder 5...'; Pause`"" -Verb RunAs;
+Add-SideButton -Name "Upgrade All" -Code {
+    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit -NoProfile -ExecutionPolicy Bypass -Command `"winget upgrade --all --accept-package-agreements --accept-source-agreements`"" -Verb RunAs;
 };
 
 # ================================================================================
@@ -449,23 +534,82 @@ if ($Winget) {
     Write-Info "Updating Winget sources...";
     Start-Process $Winget -ArgumentList "source update" -Wait -NoNewWindow -ErrorAction SilentlyContinue;
 
-    $counter = 1;
     $total = $WingetApps.Count;
+    $counter = 0;
+    $successCount = 0;
+    $skipCount = 0;
+    $failCount = 0;
+
+    $ProgressForm = New-Object System.Windows.Forms.Form;
+    $ProgressForm.Text = "Installing Applications";
+    $ProgressForm.Size = New-Object System.Drawing.Size(420, 150);
+    $ProgressForm.StartPosition = "CenterScreen";
+    $ProgressForm.FormBorderStyle = "FixedDialog";
+    $ProgressForm.MaximizeBox = $false;
+    $ProgressForm.ControlBox = $false;
+    $ProgressForm.TopMost = $true;
+
+    $StatusLabel = New-FormLabel -Text "Starting..." -X 15 -Y 15;
+    $StatusLabel.AutoSize = $false;
+    $StatusLabel.Size = New-Object System.Drawing.Size(380, 20);
+    $ProgressForm.Controls.Add($StatusLabel);
+
+    $InstallProgressBar = New-Object System.Windows.Forms.ProgressBar;
+    $InstallProgressBar.Location = New-Object System.Drawing.Point(15, 45);
+    $InstallProgressBar.Size = New-Object System.Drawing.Size(380, 25);
+    $InstallProgressBar.Minimum = 0;
+    $InstallProgressBar.Maximum = $total;
+    $InstallProgressBar.Value = 0;
+    $ProgressForm.Controls.Add($InstallProgressBar);
+
+    $CountLabel = New-FormLabel -Text "0 of $total" -X 15 -Y 80;
+    $ProgressForm.Controls.Add($CountLabel);
+
+    $ProgressForm.Show();
+    $ProgressForm.Refresh();
+
     foreach ($id in $WingetApps) {
-        Write-Host "[$counter/$total] Installing $id via Winget... " -NoNewline;
+        $counter++;
+        $CountLabel.Text = "$counter of $total";
+
+        if (Test-WingetPackageInstalled -Id $id -WingetPath $Winget) {
+            $skipCount++;
+            $StatusLabel.Text = "Already installed: $id";
+            $InstallProgressBar.Value = $counter;
+            [System.Windows.Forms.Application]::DoEvents();
+            Write-Host "[$counter/$total] $id already installed - skipping" -ForegroundColor DarkGray;
+            continue;
+        }
+
+        $StatusLabel.Text = "Installing: $id";
+        [System.Windows.Forms.Application]::DoEvents();
 
         $Process = Start-Process $Winget -ArgumentList @(
             "install","--exact","--id",$id,
             "--accept-package-agreements","--accept-source-agreements","--silent"
         ) -Wait -NoNewWindow -PassThru;
 
+        $InstallProgressBar.Value = $counter;
+        [System.Windows.Forms.Application]::DoEvents();
+
         if ($Process.ExitCode -eq 0) {
+            $successCount++;
+            Write-Host "[$counter/$total] $id " -NoNewline;
             Write-Host "[SUCCESS]" -ForegroundColor Green;
         } else {
+            $failCount++;
+            Write-Host "[$counter/$total] $id " -NoNewline;
             Write-Host "[FAILED: Code $($Process.ExitCode)]" -ForegroundColor Red;
         }
-        $counter++;
     }
+
+    $StatusLabel.Text = "Done.";
+    [System.Windows.Forms.Application]::DoEvents();
+    Start-Sleep -Milliseconds 500;
+    $ProgressForm.Close();
+    $ProgressForm.Dispose();
+
+    Write-Info "Installed: $successCount, Already present: $skipCount, Failed: $failCount";
 } else {
     Write-Warn "Winget is unavailable. Skipping installation.";
 }
