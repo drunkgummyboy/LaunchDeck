@@ -1,7 +1,7 @@
 <#
    LaunchDeck.ps1
    - Interactive GUI setup script using Windows Forms
-   - Ensures winget is installed, then installs selected apps
+   - Ensures winget is installed, then installs selected apps with icons
    - Logs to C:\Windows\Temp\FirstLogonApps_<timestamp>.log
 #>
 
@@ -9,46 +9,31 @@ $ErrorActionPreference = 'Stop';
 $ProgressPreference = 'SilentlyContinue';
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12;
 
+Add-Type -AssemblyName System.Windows.Forms;
+Add-Type -AssemblyName System.Drawing;
+
 # Timestamped log so it doesn't grow forever
 $LogPath = "C:\Windows\Temp\FirstLogonApps_$(Get-Date -Format 'yyyyMMdd_HHmmss').log";
 
-# Local cache for side-button icons so they aren't re-downloaded on every run
-$IconCacheDir = Join-Path $env:TEMP 'LaunchDeck\Icons';
-if (-not (Test-Path -LiteralPath $IconCacheDir)) {
-    New-Item -ItemType Directory -Path $IconCacheDir -Force | Out-Null;
+# Local cache for side-button and app icons so they aren't re-downloaded on every run
+$IconCacheDir = Join-Path ($env:TEMP) 'LaunchDeck\Icons';
+if (-not (Test-Path -LiteralPath ($IconCacheDir))) {
+    New-Item -ItemType Directory -Path ($IconCacheDir) -Force | Out-Null;
 }
 
 # --- Helpers -----------------------------------------------------------------
 
 function Write-Info {
-    <#
-    .SYNOPSIS
-        Writes an informational message to the console in cyan.
-    .PARAMETER m
-        The message text to display.
-    #>
     param([string]$m);
-    Write-Host "[*] $m" -ForegroundColor Cyan;
+    Write-Host "[*] $($m)" -ForegroundColor Cyan;
 }
 
 function Write-Warn {
-    <#
-    .SYNOPSIS
-        Writes a warning message to the console in yellow.
-    .PARAMETER m
-        The message text to display.
-    #>
     param([string]$m);
-    Write-Host "[!] $m" -ForegroundColor Yellow;
+    Write-Host "[!] $($m)" -ForegroundColor Yellow;
 }
 
 function Test-Winget {
-    <#
-    .SYNOPSIS
-        Checks whether winget.exe is available on the current PATH.
-    .OUTPUTS
-        [bool] True if winget is installed and resolvable, otherwise false.
-    #>
     try {
         (Get-Command winget.exe -ErrorAction Stop) | Out-Null;
         return $true;
@@ -58,89 +43,116 @@ function Test-Winget {
 }
 
 function Test-WingetPackageInstalled {
-    <#
-    .SYNOPSIS
-        Checks whether a package ID is already installed, via `winget list`.
-    .PARAMETER Id
-        The exact winget package ID to check for.
-    .PARAMETER WingetPath
-        Path or command name of the winget executable to use.
-    .OUTPUTS
-        [bool] True if the package is already present, otherwise false.
-    #>
-    param(
-        [string]$Id,
-        [string]$WingetPath
-    );
-
-    $listOutput = & $WingetPath list --id $Id --exact --accept-source-agreements 2>$null;
-    return ($LASTEXITCODE -eq 0) -and ($listOutput -match [regex]::Escape($Id));
+    param([string]$Id)
+    try {
+        # Using cmd.exe bypasses PowerShell's command cache which can fail right after an AppX package installs
+        $listOutput = cmd.exe /c "winget.exe list --id $($Id) --exact --accept-source-agreements 2>NUL";
+        return ($LASTEXITCODE -eq 0) -and ($listOutput -match [regex]::Escape($Id));
+    } catch {
+        return $false;
+    }
 }
 
 # --- Elevation Check -----------------------------------------------------------
 
 if (-not ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     $ScriptPath = if ($PSCommandPath) { $PSCommandPath; } else { $MyInvocation.MyCommand.Path; };
-    if (-not $ScriptPath -or -not (Test-Path -LiteralPath $ScriptPath)) {
-        Write-Warn "Cannot self-elevate: script was not launched from a file. Please re-run this script from an elevated prompt.";
-        Start-Sleep -Seconds 3;
-        exit 1;
+    if (-not $ScriptPath -or -not (Test-Path -LiteralPath ($ScriptPath))) {
+        [System.Windows.Forms.MessageBox]::Show("Cannot self-elevate: script was not launched from a file.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null;
+        return;
     }
 
     Write-Info "Requesting administrative privileges...";
+    # -NoExit keeps the window open ONLY if there is a parsing error, otherwise the exit command at the bottom closes it.
     Start-Process -FilePath "powershell.exe" -Verb RunAs -ArgumentList @(
         "-NoExit","-NoProfile","-ExecutionPolicy","Bypass","-File","`"$ScriptPath`""
     );
-    exit;
+    # This return stops the un-elevated VS Code script without killing your editor
+    return;
 }
 
 # --- Define Default Apps -------------------------------------------------------
-# NOTE: If any of these IDs fail with "No package found matching input criteria",
-#       verify with:  winget search --exact --id <ID>
 $WingetAppsMap = [ordered]@{
-    "PowerToys"        = "Microsoft.PowerToys";
-    "7-Zip"            = "7zip.7zip";
-    "Firefox"          = "Mozilla.Firefox";
-    "Google Drive"     = "Google.googleDrive";
-    "VLC"              = "VideoLAN.VLC";
-    "Discord"          = "Discord.Discord";
-    "Paint.NET"        = "dotPDN.paintdotnet";
-    "FileBot"          = "PointPlanck.FileBot";
-    "F3D"              = "f3d-app.f3d";
-    "STL-Thumb"        = "UnlimitedBacon.STL-Thumb";
-    "Node.js"          = "OpenJS.NodeJS";
-    "Python"           = "Python.Python.3";
-    "Spotify"          = "Spotify.Spotify";
-    "File Converter"   = "AdrienAllard.FileConverter";
-    "Bambu Studio"     = "Bambulab.Bambustudio";
-    "Windows Terminal" = "Microsoft.WindowsTerminal";
-};
+    "PowerToys" = @{
+        Id   = "Microsoft.PowerToys"
+        Icon = "https://upload.wikimedia.org/wikipedia/commons/1/19/2020_PowerToys_Icon.png?utm_source=commons.wikimedia.org&utm_campaign=index&utm_content=thumbnail_unscaled&_=20211006185044"
+    }
+    "7-Zip" = @{
+        Id   = "7zip.7zip"
+        Icon = "https://www.7-zip.org/favicon.ico"
+    }
+    "Firefox" = @{
+        Id   = "Mozilla.Firefox"
+        Icon = "https://www.firefox.com/media/img/favicons/firefox/browser/favicon.f093404c0135.ico"
+    }
+    "Google Drive" = @{
+        Id   = "Google.googleDrive"
+        Icon = "https://ssl.gstatic.com/images/branding/product/1x/drive_2020q4_32dp.png"
+    }
+    "VLC" = @{
+        Id   = "VideoLAN.VLC"
+        Icon = "https://www.videolan.org/favicon.ico"
+    }
+    "Discord" = @{
+        Id   = "Discord.Discord"
+        Icon = "https://assets-global.website-files.com/6257adef93867e50d84d30e2/636e0a6a49cf127bf92de1e2_icon_clyde_blurple_RGB.png"
+    }
+    "Paint.NET" = @{
+        Id   = "dotPDN.paintdotnet"
+        Icon = "https://paint.net/favicon.ico"
+    }
+    "FileBot" = @{
+        Id   = "PointPlanck.FileBot"
+        Icon = "https://www.filebot.net/favicon.ico"
+    }
+    "F3D" = @{
+        Id   = "f3d-app.f3d"
+        Icon = "https://f3d.app/logos/favicon.ico"
+    }
+    "STL-Thumb" = @{
+        Id   = "UnlimitedBacon.STL-Thumb"
+        Icon = "https://user-images.githubusercontent.com/3131268/170938020-5c2495ca-f7ab-44c1-9d76-d994bff277f6.png"
+    }
+    "Node.js" = @{
+        Id   = "OpenJS.NodeJS"
+        Icon = "https://nodejs.org/static/images/favicons/favicon.png"
+    }
+    "Python" = @{
+        Id   = "Python.Python.3"
+        Icon = "https://www.python.org/static/favicon.ico"
+    }
+    "Spotify" = @{
+        Id   = "Spotify.Spotify"
+        Icon = "https://open.spotifycdn.com/cdn/images/favicon32.b64ecc03.png"
+    }
+    "File Converter" = @{
+        Id   = "AdrienAllard.FileConverter"
+        Icon = "https://file-converter.io/images/application-icon.png"
+    }
+    "Bambu Studio" = @{
+        Id   = "Bambulab.Bambustudio"
+        Icon = "https://bambulab.com/favicon.ico"
+    }
+    "Windows Terminal" = @{
+        Id   = "Microsoft.WindowsTerminal"
+        Icon = "https://raw.githubusercontent.com/microsoft/terminal/main/res/terminal.ico"
+    }
+    "Visual Studio Code" = @{
+        Id   = "Microsoft.VisualStudioCode"
+        Icon = "https://code.visualstudio.com/favicon.ico"
+    }
+}
 
 # --- GUI Creation (Windows Forms) -----------------------------------------------
 
-Add-Type -AssemblyName System.Windows.Forms;
-Add-Type -AssemblyName System.Drawing;
-
 $Form = New-Object System.Windows.Forms.Form;
 $Form.Text = "System Provisioning Setup";
-$Form.Size = New-Object System.Drawing.Size(650, 520);
+$Form.Size = New-Object System.Drawing.Size(975, 520);
 $Form.StartPosition = "CenterScreen";
-$Form.FormBorderStyle = "FixedDialog";
-$Form.MaximizeBox = $false;
+$Form.FormBorderStyle = "Sizable";
+$Form.MaximizeBox = $true;
 
 function New-FormLabel {
-    <#
-    .SYNOPSIS
-        Creates a positioned, auto-sized Windows Forms label.
-    .PARAMETER Text
-        The label's display text.
-    .PARAMETER X
-        Horizontal position in pixels.
-    .PARAMETER Y
-        Vertical position in pixels.
-    .PARAMETER Bold
-        Renders the label in bold Segoe UI 10pt when set.
-    #>
     param(
         [string]$Text,
         [int]$X,
@@ -162,40 +174,128 @@ function New-FormLabel {
 $TitleLabel = New-FormLabel -Text "Select Applications to Install:" -X 15 -Y 15 -Bold;
 $Form.Controls.Add($TitleLabel);
 
+$TotalApps = $WingetAppsMap.Count;
+
+# Selection Counter
+$CounterLabel = New-FormLabel -Text "$TotalApps / $TotalApps Selected" -X 260 -Y 15;
+$CounterLabel.ForeColor = [System.Drawing.Color]::Gray;
+$Form.Controls.Add($CounterLabel);
+
+# Select All Button
+$BtnSelectAll = New-Object System.Windows.Forms.Button;
+$BtnSelectAll.Text = "Select All";
+$BtnSelectAll.Location = New-Object System.Drawing.Point(415, 12);
+$BtnSelectAll.Size = New-Object System.Drawing.Size(75, 25);
+$BtnSelectAll.Cursor = [System.Windows.Forms.Cursors]::Hand;
+$Form.Controls.Add($BtnSelectAll);
+
+# Deselect All Button
+$BtnDeselectAll = New-Object System.Windows.Forms.Button;
+$BtnDeselectAll.Text = "Deselect All";
+$BtnDeselectAll.Location = New-Object System.Drawing.Point(495, 12);
+$BtnDeselectAll.Size = New-Object System.Drawing.Size(85, 25);
+$BtnDeselectAll.Cursor = [System.Windows.Forms.Cursors]::Hand;
+$Form.Controls.Add($BtnDeselectAll);
+
 # Winget Label
 $WingetLabel = New-FormLabel -Text "Winget Packages:" -X 15 -Y 45;
 $Form.Controls.Add($WingetLabel);
 
-# Winget CheckedListBox (taller now that Choco list is gone)
-$WingetList = New-Object System.Windows.Forms.CheckedListBox;
-$WingetList.Location = New-Object System.Drawing.Point(15, 65);
-$WingetList.Size = New-Object System.Drawing.Size(370, 330);
-$WingetList.CheckOnClick = $true;
-foreach ($appName in $WingetAppsMap.Keys) { $null = $WingetList.Items.Add($appName, $true); }
-$Form.Controls.Add($WingetList);
+# Create a FlowLayoutPanel for the cards
+$FlowPanel = New-Object System.Windows.Forms.FlowLayoutPanel;
+$FlowPanel.Location = New-Object System.Drawing.Point(15, 65);
+$FlowPanel.Size = New-Object System.Drawing.Size(700, 340);
+$FlowPanel.AutoScroll = $true;
+$FlowPanel.Anchor = "Top, Bottom, Left, Right";
+$Form.Controls.Add($FlowPanel);
+
+# Scriptblock to update the counter
+$UpdateCounterAction = {
+    $currentCount = 0;
+    foreach ($c in ($FlowPanel.Controls)) {
+        if ($c.GetType().Name -eq "CheckBox" -and $c.Checked) {
+            $currentCount++;
+        }
+    }
+    $CounterLabel.Text = "$currentCount / $TotalApps Selected";
+}
+
+# Actions for the Toggle Buttons
+$BtnSelectAll.Add_Click({
+    $FlowPanel.SuspendLayout();
+    foreach ($c in ($FlowPanel.Controls)) {
+        if ($c.GetType().Name -eq "CheckBox") { $c.Checked = $true; }
+    }
+    $FlowPanel.ResumeLayout();
+    & $UpdateCounterAction;
+})
+
+$BtnDeselectAll.Add_Click({
+    $FlowPanel.SuspendLayout();
+    foreach ($c in ($FlowPanel.Controls)) {
+        if ($c.GetType().Name -eq "CheckBox") { $c.Checked = $false; }
+    }
+    $FlowPanel.ResumeLayout();
+    & $UpdateCounterAction;
+})
+
+# Populate items and resolve/cache icons
+foreach ($appName in ($WingetAppsMap.Keys)) {
+    $entry = $WingetAppsMap[$appName];
+
+    # Create a CheckBox styled as a flat Card/Button
+    $Card = New-Object System.Windows.Forms.CheckBox;
+    $Card.Appearance = [System.Windows.Forms.Appearance]::Button;
+    $Card.Text = $appName;
+    $Card.Tag = $entry.Id;
+    $Card.Size = New-Object System.Drawing.Size(115, 85);
+    $Card.TextAlign = [System.Drawing.ContentAlignment]::BottomCenter;
+    $Card.TextImageRelation = [System.Windows.Forms.TextImageRelation]::ImageAboveText;
+    $Card.Checked = $true;
+    $Card.Cursor = [System.Windows.Forms.Cursors]::Hand;
+    
+    # Styling for selected/unselected states
+    $Card.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat;
+    $Card.FlatAppearance.BorderColor = [System.Drawing.Color]::LightGray;
+    $Card.FlatAppearance.CheckedBackColor = [System.Drawing.Color]::LightSkyBlue;
+
+    # Update counter when a card is manually clicked
+    $Card.Add_Click($UpdateCounterAction);
+
+    if (-not [string]::IsNullOrWhiteSpace($entry.Icon)) {
+        try {
+            $ext = [System.IO.Path]::GetExtension($entry.Icon.Split('?')[0]);
+            if (-not $ext -or $ext.Length -gt 5) { $ext = ".ico"; }
+            $cacheFile = Join-Path ($IconCacheDir) ("{0}{1}" -f ($appName -replace '[^a-zA-Z0-9]', '_'), $ext);
+
+            if (-not (Test-Path -LiteralPath ($cacheFile))) {
+                Invoke-WebRequest -Uri ($entry.Icon) -OutFile ($cacheFile) -TimeoutSec 5 -ErrorAction Stop;
+            }
+
+            $srcImg = [System.Drawing.Image]::FromFile($cacheFile);
+            $CardIconSize = New-Object System.Drawing.Size(32, 32);
+            $Card.Image = New-Object System.Drawing.Bitmap($srcImg, $CardIconSize);
+            $srcImg.Dispose(); 
+        } catch {
+            Write-Warn "Could not load icon for $($appName). Using default.";
+        }
+    }
+
+    $FlowPanel.Controls.Add($Card);
+}
 
 # --- RIGHT PANE (Other Scripts) -------------------------------------------------
 
 $RightPane = New-Object System.Windows.Forms.GroupBox;
 $RightPane.Text = "Other Scripts";
-$RightPane.Location = New-Object System.Drawing.Point(410, 15);
+$RightPane.Location = New-Object System.Drawing.Point(735, 15);
 $RightPane.Size = New-Object System.Drawing.Size(200, 380);
+$RightPane.Anchor = "Top, Bottom, Right";
 $Form.Controls.Add($RightPane);
 
 $script:ButtonY = 30;
 
 function Add-SideButton {
-    <#
-    .SYNOPSIS
-        Adds a click-to-run button to the "Other Scripts" side panel.
-    .PARAMETER Name
-        The button's display text.
-    .PARAMETER Code
-        A scriptblock to run when the button is clicked.
-    .PARAMETER IconUrl
-        Optional URL of a small icon to show on the button. Downloaded once
-        and cached under $IconCacheDir so later runs load it from disk.
-    #>
     param(
         [string]$Name,
         [scriptblock]$Code,
@@ -209,10 +309,10 @@ function Add-SideButton {
 
     if (-not [string]::IsNullOrWhiteSpace($IconUrl)) {
         try {
-            $CacheFile = Join-Path $IconCacheDir ("{0}.png" -f ($Name.Trim() -replace '[^a-zA-Z0-9]', '_'));
+            $CacheFile = Join-Path ($IconCacheDir) ("{0}.png" -f ($Name.Trim() -replace '[^a-zA-Z0-9]', '_'));
 
-            if (-not (Test-Path -LiteralPath $CacheFile)) {
-                Invoke-WebRequest -Uri $IconUrl -OutFile $CacheFile;
+            if (-not (Test-Path -LiteralPath ($CacheFile))) {
+                Invoke-WebRequest -Uri ($IconUrl) -OutFile ($CacheFile);
             }
 
             $image = [System.Drawing.Image]::FromFile($CacheFile);
@@ -237,15 +337,13 @@ function Add-SideButton {
 }
 
 # ================================================================================
-# ADD YOUR CUSTOM BUTTONS HERE
+# CUSTOM BUTTONS
 # ================================================================================
 
-# Button 1
 Add-SideButton -Name " WinUtil" -IconUrl "https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/refs/heads/main/LaunchDeck/CTTtools.ico" -Code {
     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm christitus.com/win | iex`"" -Verb RunAs;
 };
 
-# Button 2
 Add-SideButton -Name "Office" -IconUrl "https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/refs/heads/main/LaunchDeck/microsoft-logo.png" -Code {
     $SubForm = New-Object System.Windows.Forms.Form;
     $SubForm.Text = "Office Scripts";
@@ -288,7 +386,6 @@ Add-SideButton -Name "Office" -IconUrl "https://raw.githubusercontent.com/drunkg
     $SubForm.Dispose();
 };
 
-# Button 3
 Add-SideButton -Name "Set Boot Name" -Code {
     $BootForm = New-Object System.Windows.Forms.Form;
     $BootForm.Text = "Set Boot Name";
@@ -302,7 +399,6 @@ Add-SideButton -Name "Set Boot Name" -Code {
     $monthYear = $culture.TextInfo.ToTitleCase($monthYear);
     $defaultName = "Windows $monthYear";
 
-    # Radio: Default Month/Year
     $RadioDefault = New-Object System.Windows.Forms.RadioButton;
     $RadioDefault.Text = "Default ($defaultName)";
     $RadioDefault.Location = New-Object System.Drawing.Point(20, 20);
@@ -310,33 +406,28 @@ Add-SideButton -Name "Set Boot Name" -Code {
     $RadioDefault.Checked = $true;
     $BootForm.Controls.Add($RadioDefault);
 
-    # Radio: Custom
     $RadioCustom = New-Object System.Windows.Forms.RadioButton;
     $RadioCustom.Text = "Custom:";
     $RadioCustom.Location = New-Object System.Drawing.Point(20, 50);
     $RadioCustom.Size = New-Object System.Drawing.Size(70, 20);
     $BootForm.Controls.Add($RadioCustom);
 
-    # TextBox: Custom Name
     $TextBoxCustom = New-Object System.Windows.Forms.TextBox;
     $TextBoxCustom.Location = New-Object System.Drawing.Point(90, 50);
     $TextBoxCustom.Size = New-Object System.Drawing.Size(210, 20);
     $TextBoxCustom.Enabled = $false;
     $BootForm.Controls.Add($TextBoxCustom);
 
-    # Event to toggle TextBox
     $RadioCustom.Add_CheckedChanged({
         $TextBoxCustom.Enabled = $RadioCustom.Checked;
     });
 
-    # Apply Button
     $ApplyBtn = New-Object System.Windows.Forms.Button;
     $ApplyBtn.Text = "Apply";
     $ApplyBtn.Location = New-Object System.Drawing.Point(80, 110);
     $ApplyBtn.DialogResult = [System.Windows.Forms.DialogResult]::OK;
     $BootForm.Controls.Add($ApplyBtn);
 
-    # Cancel Button
     $CancelBtn = New-Object System.Windows.Forms.Button;
     $CancelBtn.Text = "Cancel";
     $CancelBtn.Location = New-Object System.Drawing.Point(180, 110);
@@ -355,14 +446,13 @@ Add-SideButton -Name "Set Boot Name" -Code {
             $defaultName;
         };
 
-        # Build the script string to run in the elevated prompt
         $ScriptString = @"
             `$newDesc = "$newName";
             `$IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);
             if (-not `$IsAdmin) {
                 Write-Error "Please run this script in PowerShell **as Administrator**.";
                 Start-Sleep -Seconds 3;
-                exit 1;
+                return;
             }
 
             Write-Host "Setting boot entry description to: `$newDesc";
@@ -377,25 +467,20 @@ Add-SideButton -Name "Set Boot Name" -Code {
 
             Write-Host "`nPress any key to close...";
             `$null = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown');
-            exit `$LASTEXITCODE;
 "@;
-
         $Bytes = [System.Text.Encoding]::Unicode.GetBytes($ScriptString);
         $Encoded = [Convert]::ToBase64String($Bytes);
         Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $Encoded" -Verb RunAs;
     }
-
     $BootForm.Dispose();
 };
 
-# Button 4
 Add-SideButton -Name "Rename Computer" -Code {
     $RenameForm = New-Object System.Windows.Forms.Form;
     $RenameForm.Text = "Rename Computer";
-    $RenameForm.Size = New-Object System.Drawing.Size(340, 170);
-    $RenameForm.StartPosition = "CenterParent";
+    $RenameForm.Size = New-Object System.Drawing.Size(340, 170);$RenameForm.StartPosition = "CenterParent";
     $RenameForm.FormBorderStyle = "FixedDialog";
-    $RenameForm.MaximizeBox = $false;
+    $RenameForm.MaximizeBox =$false;
 
     $CurrentNameLabel = New-FormLabel -Text "Current name: $env:COMPUTERNAME" -X 20 -Y 20;
     $RenameForm.Controls.Add($CurrentNameLabel);
@@ -405,39 +490,36 @@ Add-SideButton -Name "Rename Computer" -Code {
 
     $NewNameBox = New-Object System.Windows.Forms.TextBox;
     $NewNameBox.Location = New-Object System.Drawing.Point(100, 52);
-    $NewNameBox.Size = New-Object System.Drawing.Size(200, 20);
-    $NewNameBox.MaxLength = 15;
+    $NewNameBox.Size = New-Object System.Drawing.Size(200, 20);$NewNameBox.MaxLength = 15;
     $RenameForm.Controls.Add($NewNameBox);
 
     $ApplyBtn = New-Object System.Windows.Forms.Button;
     $ApplyBtn.Text = "Apply";
-    $ApplyBtn.Location = New-Object System.Drawing.Point(80, 105);
-    $ApplyBtn.DialogResult = [System.Windows.Forms.DialogResult]::OK;
+    $ApplyBtn.Location = New-Object System.Drawing.Point(80, 105);$ApplyBtn.DialogResult = [System.Windows.Forms.DialogResult]::OK;
     $RenameForm.Controls.Add($ApplyBtn);
 
     $CancelBtn = New-Object System.Windows.Forms.Button;
     $CancelBtn.Text = "Cancel";
-    $CancelBtn.Location = New-Object System.Drawing.Point(180, 105);
-    $CancelBtn.DialogResult = [System.Windows.Forms.DialogResult]::Cancel;
+    $CancelBtn.Location = New-Object System.Drawing.Point(180, 105);$CancelBtn.DialogResult = [System.Windows.Forms.DialogResult]::Cancel;
     $RenameForm.Controls.Add($CancelBtn);
 
-    $RenameForm.AcceptButton = $ApplyBtn;
-    $RenameForm.CancelButton = $CancelBtn;
+    $RenameForm.AcceptButton =$ApplyBtn;
+    $RenameForm.CancelButton =$CancelBtn;
 
-    $result = $RenameForm.ShowDialog();
+    $result =$RenameForm.ShowDialog();
 
     if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-        $newComputerName = $NewNameBox.Text.Trim();
+        $newComputerName =$NewNameBox.Text.Trim();
 
         if ([string]::IsNullOrWhiteSpace($newComputerName)) {
             [System.Windows.Forms.MessageBox]::Show("Enter a computer name first.", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null;
         } elseif ($newComputerName -notmatch '^[a-zA-Z0-9-]{1,15}$') {
             [System.Windows.Forms.MessageBox]::Show("Names can only use letters, numbers, and hyphens (max 15 characters).", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null;
-        } elseif ($newComputerName -eq $env:COMPUTERNAME) {
+        } elseif ($newComputerName -eq$env:COMPUTERNAME) {
             [System.Windows.Forms.MessageBox]::Show("That's already the current name.", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null;
         } else {
             try {
-                Rename-Computer -NewName $newComputerName -Force -ErrorAction Stop;
+                Rename-Computer -NewName ($newComputerName) -Force -ErrorAction Stop;
                 $confirmRestart = [System.Windows.Forms.MessageBox]::Show("Renamed to '$newComputerName'. This needs a restart to take effect. Restart now?", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question);
                 if ($confirmRestart -eq [System.Windows.Forms.DialogResult]::Yes) {
                     Restart-Computer -Force;
@@ -447,11 +529,9 @@ Add-SideButton -Name "Rename Computer" -Code {
             }
         }
     }
-
     $RenameForm.Dispose();
 };
 
-# Button 5
 Add-SideButton -Name "Upgrade All" -Code {
     Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit -NoProfile -ExecutionPolicy Bypass -Command `"winget upgrade --all --accept-package-agreements --accept-source-agreements`"" -Verb RunAs;
 };
@@ -461,164 +541,144 @@ Add-SideButton -Name "Upgrade All" -Code {
 # OK Button
 $OKButton = New-Object System.Windows.Forms.Button;
 $OKButton.Text = "Install Selected";
-$OKButton.Location = New-Object System.Drawing.Point(180, 420);
-$OKButton.Size = New-Object System.Drawing.Size(120, 35);
-$OKButton.DialogResult = [System.Windows.Forms.DialogResult]::OK;
+$OKButton.Location = New-Object System.Drawing.Point(510, 420);
+$OKButton.Size = New-Object System.Drawing.Size(120, 35);$OKButton.Anchor = "Bottom, Right";
 $Form.Controls.Add($OKButton);
 
 # Cancel Button
 $CancelButton = New-Object System.Windows.Forms.Button;
-$CancelButton.Text = "Cancel";
-$CancelButton.Location = New-Object System.Drawing.Point(310, 420);
-$CancelButton.Size = New-Object System.Drawing.Size(75, 35);
-$CancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel;
+$CancelButton.Text = "Close";
+$CancelButton.Location = New-Object System.Drawing.Point(640, 420);
+$CancelButton.Size = New-Object System.Drawing.Size(75, 35);$CancelButton.DialogResult = [System.Windows.Forms.DialogResult]::Cancel; # This WILL close the form
+$CancelButton.Anchor = "Bottom, Right";
 $Form.Controls.Add($CancelButton);
 
-$Form.AcceptButton = $OKButton;
-$Form.CancelButton = $CancelButton;
+$Form.AcceptButton =$OKButton;
+$Form.CancelButton =$CancelButton;
 
-# Show the GUI and capture the result
-$Result = $Form.ShowDialog();
-$Form.Dispose();
-
-if ($Result -ne [System.Windows.Forms.DialogResult]::OK) {
-    Write-Warn "Installation aborted by user.";
-    Start-Sleep -Seconds 2;
-    exit;
-}
-
-# --- Extract Selected Apps from GUI ---------------------------------------------
-$WingetApps = @();
-foreach ($item in $WingetList.CheckedItems) { $WingetApps += $WingetAppsMap[$item]; }
-
-if ($WingetApps.Count -eq 0) {
-    Write-Warn "No applications selected. Exiting...";
-    Start-Sleep -Seconds 2;
-    exit;
-}
-
-# --- Begin Installation Process --------------------------------------------------
-Clear-Host;
-Write-Info "Starting deployment based on selection...";
-Start-Transcript -Path $LogPath -Append -ErrorAction SilentlyContinue;
-
-# --- Winget bootstrap ---
-if (-not (Test-Winget)) {
-    Write-Info "Bootstrapping Winget and dependencies...";
-    try {
-        $VCLibsPath = "$env:TEMP\Microsoft.VCLibs.x64.14.00.Desktop.appx";
-        Invoke-WebRequest -Uri "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx" -OutFile $VCLibsPath;
-        Add-AppxPackage $VCLibsPath -ErrorAction SilentlyContinue;
-
-        $XamlPath = "$env:TEMP\Microsoft.UI.Xaml.2.8.x64.appx";
-        Invoke-WebRequest -Uri "https://github.com/microsoft/microsoft-ui-xaml/releases/download/v2.8.6/Microsoft.UI.Xaml.2.8.x64.appx" -OutFile $XamlPath;
-        Add-AppxPackage $XamlPath -ErrorAction SilentlyContinue;
-
-        Invoke-WebRequest -Uri "https://aka.ms/getwinget" -OutFile "$env:TEMP\AppInstaller.msixbundle";
-        Add-AppxPackage "$env:TEMP\AppInstaller.msixbundle";
-
-        $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User");
-    } catch {
-        Write-Warn "Winget bootstrap failed. Ensure Windows is updated.";
+# --- Main Installation Logic (Runs inside the button click) ---
+$OKButton.Add_Click({$WingetApps = @();
+    foreach ($card in ($FlowPanel.Controls)) { 
+        if ($card.GetType().Name -eq "CheckBox" -and $card.Checked) {
+            $WingetApps +=$card.Tag;
+        }
     }
-}
 
-$Winget = if (Test-Winget) { "winget.exe"; } else { $null; };
+    if ($WingetApps.Count -eq 0) {
+        [System.Windows.Forms.MessageBox]::Show("No applications selected.", "Notice", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null;
+        return;
+    }
 
-Write-Host "`n=======================================================" -ForegroundColor Cyan;
-Write-Host "             INSTALLING APPLICATIONS                   " -ForegroundColor White;
-Write-Host "=======================================================" -ForegroundColor Cyan;
+    # Disable buttons during install to prevent double-clicking
+    $OKButton.Enabled =$false;
+    $CancelButton.Enabled =$false;
 
-# --- Install Winget Apps ---------------------------------------------------------
-if ($Winget) {
-    Write-Info "Updating Winget sources...";
-    Start-Process $Winget -ArgumentList "source update" -Wait -NoNewWindow -ErrorAction SilentlyContinue;
+    Clear-Host;
+    Start-Transcript -Path ($LogPath) -Append -ErrorAction SilentlyContinue;
 
-    $total = $WingetApps.Count;
-    $counter = 0;
-    $successCount = 0;
-    $skipCount = 0;
-    $failCount = 0;
+    # Winget bootstrap
+    if (-not (Test-Winget)) {
+        try {
+            $VCLibsPath = "$env:TEMP\Microsoft.VCLibs.x64.14.00.Desktop.appx";
+            Invoke-WebRequest -Uri "https://aka.ms/Microsoft.VCLibs.x64.14.00.Desktop.appx" -OutFile ($VCLibsPath);
+            Add-AppxPackage ($VCLibsPath) -ErrorAction SilentlyContinue;
 
+            $XamlPath = "$env:TEMP\Microsoft.UI.Xaml.2.8.x64.appx";
+            Invoke-WebRequest -Uri "https://github.com/microsoft/microsoft-ui-xaml/releases/download/v2.8.6/Microsoft.UI.Xaml.2.8.x64.appx" -OutFile ($XamlPath);
+            Add-AppxPackage ($XamlPath) -ErrorAction SilentlyContinue;
+
+            Invoke-WebRequest -Uri "https://aka.ms/getwinget" -OutFile ("$env:TEMP\AppInstaller.msixbundle");
+            Add-AppxPackage ("$env:TEMP\AppInstaller.msixbundle");
+
+            $env:Path = [System.Environment]::GetEnvironmentVariable("Path","Machine") + ";" + [System.Environment]::GetEnvironmentVariable("Path","User");
+        } catch {}
+    }
+
+    # GUI Progress Bar Form
     $ProgressForm = New-Object System.Windows.Forms.Form;
     $ProgressForm.Text = "Installing Applications";
-    $ProgressForm.Size = New-Object System.Drawing.Size(420, 150);
-    $ProgressForm.StartPosition = "CenterScreen";
+    $ProgressForm.Size = New-Object System.Drawing.Size(420, 150);$ProgressForm.StartPosition = "CenterScreen";
     $ProgressForm.FormBorderStyle = "FixedDialog";
-    $ProgressForm.MaximizeBox = $false;
-    $ProgressForm.ControlBox = $false;
-    $ProgressForm.TopMost = $true;
+    $ProgressForm.MaximizeBox =$false;
+    $ProgressForm.ControlBox =$false;
+    $ProgressForm.TopMost =$true;
 
     $StatusLabel = New-FormLabel -Text "Starting..." -X 15 -Y 15;
-    $StatusLabel.AutoSize = $false;
+    $StatusLabel.AutoSize =$false;
     $StatusLabel.Size = New-Object System.Drawing.Size(380, 20);
     $ProgressForm.Controls.Add($StatusLabel);
 
+    $total =$WingetApps.Count;
     $InstallProgressBar = New-Object System.Windows.Forms.ProgressBar;
     $InstallProgressBar.Location = New-Object System.Drawing.Point(15, 45);
-    $InstallProgressBar.Size = New-Object System.Drawing.Size(380, 25);
-    $InstallProgressBar.Minimum = 0;
-    $InstallProgressBar.Maximum = $total;
+    $InstallProgressBar.Size = New-Object System.Drawing.Size(380, 25);$InstallProgressBar.Minimum = 0;
+    $InstallProgressBar.Maximum =$total;
     $InstallProgressBar.Value = 0;
     $ProgressForm.Controls.Add($InstallProgressBar);
 
     $CountLabel = New-FormLabel -Text "0 of $total" -X 15 -Y 80;
     $ProgressForm.Controls.Add($CountLabel);
 
-    $ProgressForm.Show();
-    $ProgressForm.Refresh();
+    $ProgressForm.Show();$ProgressForm.Refresh();
 
-    foreach ($id in $WingetApps) {
-        $counter++;
-        $CountLabel.Text = "$counter of $total";
+    $successCount = 0;
+    $skipCount = 0;
+    $failCount = 0;
 
-        if (Test-WingetPackageInstalled -Id $id -WingetPath $Winget) {
-            $skipCount++;
-            $StatusLabel.Text = "Already installed: $id";
-            $InstallProgressBar.Value = $counter;
+    # Install Winget Apps
+    if (Test-Winget) {
+        $StatusLabel.Text = "Updating Winget sources...";
+        [System.Windows.Forms.Application]::DoEvents();
+        Start-Process -FilePath "winget.exe" -ArgumentList "source update" -Wait -NoNewWindow -ErrorAction SilentlyContinue;
+
+        $counter = 0;
+
+        foreach ($id in ($WingetApps)) {
+            $counter++;$CountLabel.Text = "$counter of$total";
+
+            if (Test-WingetPackageInstalled -Id ($id)) {
+                $skipCount++;$StatusLabel.Text = "Already installed: $id";
+                $InstallProgressBar.Value =$counter;
+                [System.Windows.Forms.Application]::DoEvents();
+                continue;
+            }
+
+            $StatusLabel.Text = "Installing: $id";
             [System.Windows.Forms.Application]::DoEvents();
-            Write-Host "[$counter/$total] $id already installed - skipping" -ForegroundColor DarkGray;
-            continue;
+
+            $Process = Start-Process -FilePath "winget.exe" -ArgumentList @(
+                "install","--exact","--id",($id),
+                "--accept-package-agreements","--accept-source-agreements","--silent"
+            ) -Wait -NoNewWindow -PassThru;
+
+            $InstallProgressBar.Value =$counter;
+            [System.Windows.Forms.Application]::DoEvents();
+
+            if ($Process.ExitCode -eq 0) {$successCount++;
+            } else {
+                $failCount++;
+            }
         }
-
-        $StatusLabel.Text = "Installing: $id";
-        [System.Windows.Forms.Application]::DoEvents();
-
-        $Process = Start-Process $Winget -ArgumentList @(
-            "install","--exact","--id",$id,
-            "--accept-package-agreements","--accept-source-agreements","--silent"
-        ) -Wait -NoNewWindow -PassThru;
-
-        $InstallProgressBar.Value = $counter;
-        [System.Windows.Forms.Application]::DoEvents();
-
-        if ($Process.ExitCode -eq 0) {
-            $successCount++;
-            Write-Host "[$counter/$total] $id " -NoNewline;
-            Write-Host "[SUCCESS]" -ForegroundColor Green;
-        } else {
-            $failCount++;
-            Write-Host "[$counter/$total] $id " -NoNewline;
-            Write-Host "[FAILED: Code $($Process.ExitCode)]" -ForegroundColor Red;
-        }
+    } else {
+        [System.Windows.Forms.MessageBox]::Show("Winget is unavailable. Skipping installation.", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null;
     }
 
-    $StatusLabel.Text = "Done.";
-    [System.Windows.Forms.Application]::DoEvents();
-    Start-Sleep -Milliseconds 500;
-    $ProgressForm.Close();
-    $ProgressForm.Dispose();
+    Stop-Transcript | Out-Null;
 
-    Write-Info "Installed: $successCount, Already present: $skipCount, Failed: $failCount";
-} else {
-    Write-Warn "Winget is unavailable. Skipping installation.";
-}
+    $ProgressForm.Close();$ProgressForm.Dispose();
 
-Write-Host "`n=======================================================" -ForegroundColor Cyan;
-Write-Host "             PROVISIONING COMPLETE                     " -ForegroundColor White;
-Write-Host "=======================================================" -ForegroundColor Cyan;
-Write-Info "Log saved to: $LogPath";
+    # Final Alert Box
+    $SummaryMessage = "Provisioning Complete!`n`nInstalled: $successCount`nAlready Present: $skipCount`nFailed: $failCount`n`nLog saved to: $LogPath";
+    [System.Windows.Forms.MessageBox]::Show($SummaryMessage, "LaunchDeck", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null;
 
-Stop-Transcript | Out-Null;
-Write-Host "`nPress any key to close..." -ForegroundColor Cyan;
-$null = $Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown');
+    # Re-enable buttons so user can continue using the app
+    $OKButton.Enabled =$true;
+    $CancelButton.Enabled =$true;
+})
+
+# Show the GUI and keep it open until the user clicks "Close" or the X button
+$Form.ShowDialog() | Out-Null;
+$Form.Dispose();
+
+# Explicit exit so the elevated background shell properly closes when done
+exit;
