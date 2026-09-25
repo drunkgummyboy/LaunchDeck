@@ -337,204 +337,31 @@ function Add-SideButton {
 }
 
 # ================================================================================
-# CUSTOM BUTTONS
+# CUSTOM BUTTONS (Fetching scripts from GitHub)
 # ================================================================================
 
-Add-SideButton -Name " WinUtil" -IconUrl "https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/refs/heads/main/LaunchDeck/CTTtools.ico" -Code {
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm christitus.com/win | iex`"" -Verb RunAs;
-};
+# Base URL to your scripts on GitHub
+$GithubBase = "https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/refs/heads/main"
 
-Add-SideButton -Name "Office" -IconUrl "https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/refs/heads/main/LaunchDeck/microsoft-logo.png" -Code {
-    $SubForm = New-Object System.Windows.Forms.Form;
-    $SubForm.Text = "Office Scripts";
-    $SubForm.Size = New-Object System.Drawing.Size(300, 250);
-    $SubForm.StartPosition = "CenterParent";
-    $SubForm.FormBorderStyle = "FixedDialog";
-    $SubForm.MaximizeBox = $false;
+Add-SideButton -Name "Create WinUtil shortcut" -IconUrl "$GithubBase/LaunchDeck/CTTtools.ico" -Code {
+    Invoke-RestMethod -Uri "$GithubBase/scripts/WinUtil.ps1" | Invoke-Expression
+}
 
-    $SubRemoveButton = New-Object System.Windows.Forms.Button;
-    $SubRemoveButton.Text = "Office Removal";
-    $SubRemoveButton.Location = New-Object System.Drawing.Point(50, 30);
-    $SubRemoveButton.Size = New-Object System.Drawing.Size(180, 40);
-    $SubRemoveButton.Add_Click({
-        Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"iwr https://get.admon.me/remove-msoffice -OutFile msoffice-removal-tool.ps1; .\msoffice-removal-tool.ps1 -Force -SuppressReboot`"" -Verb RunAs;
-        $SubForm.Close();
-    });
-    $SubForm.Controls.Add($SubRemoveButton);
+Add-SideButton -Name "Office" -IconUrl "$GithubBase/LaunchDeck/microsoft-logo.png" -Code {
+    Invoke-RestMethod -Uri "$GithubBase/scripts/Office.ps1" | Invoke-Expression
+}
 
-    $SubDownloadButton = New-Object System.Windows.Forms.Button;
-    $SubDownloadButton.Text = "Office Download";
-    $SubDownloadButton.Location = New-Object System.Drawing.Point(50, 80);
-    $SubDownloadButton.Size = New-Object System.Drawing.Size(180, 40);
-    $SubDownloadButton.Add_Click({
-        Start-Process -FilePath "https://massgrave.dev/genuine-installation-media";
-        $SubForm.Close();
-    });
-    $SubForm.Controls.Add($SubDownloadButton);
+Add-SideButton -Name "Set Name" -Code {
+    Invoke-RestMethod -Uri "$GithubBase/scripts/SetName.ps1" | Invoke-Expression
+}
 
-    $SubActivateButton = New-Object System.Windows.Forms.Button;
-    $SubActivateButton.Text = "Office Activate";
-    $SubActivateButton.Location = New-Object System.Drawing.Point(50, 130);
-    $SubActivateButton.Size = New-Object System.Drawing.Size(180, 40);
-    $SubActivateButton.Add_Click({
-        Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -Command `"irm https://get.activated.win | iex`"" -Verb RunAs;
-        $SubForm.Close();
-    });
-    $SubForm.Controls.Add($SubActivateButton);
-
-    $SubForm.ShowDialog() | Out-Null;
-    $SubForm.Dispose();
-};
-
-Add-SideButton -Name "Set Boot Name" -Code {
-    $BootForm = New-Object System.Windows.Forms.Form;
-    $BootForm.Text = "Set Boot Name";
-    $BootForm.Size = New-Object System.Drawing.Size(350, 200);
-    $BootForm.StartPosition = "CenterParent";
-    $BootForm.FormBorderStyle = "FixedDialog";
-    $BootForm.MaximizeBox = $false;
-
-    $culture = Get-Culture;
-    $monthYear = (Get-Date -Format "MMMM yyyy");
-    $monthYear = $culture.TextInfo.ToTitleCase($monthYear);
-    $defaultName = "Windows $monthYear";
-
-    $RadioDefault = New-Object System.Windows.Forms.RadioButton;
-    $RadioDefault.Text = "Default ($defaultName)";
-    $RadioDefault.Location = New-Object System.Drawing.Point(20, 20);
-    $RadioDefault.Size = New-Object System.Drawing.Size(300, 20);
-    $RadioDefault.Checked = $true;
-    $BootForm.Controls.Add($RadioDefault);
-
-    $RadioCustom = New-Object System.Windows.Forms.RadioButton;
-    $RadioCustom.Text = "Custom:";
-    $RadioCustom.Location = New-Object System.Drawing.Point(20, 50);
-    $RadioCustom.Size = New-Object System.Drawing.Size(70, 20);
-    $BootForm.Controls.Add($RadioCustom);
-
-    $TextBoxCustom = New-Object System.Windows.Forms.TextBox;
-    $TextBoxCustom.Location = New-Object System.Drawing.Point(90, 50);
-    $TextBoxCustom.Size = New-Object System.Drawing.Size(210, 20);
-    $TextBoxCustom.Enabled = $false;
-    $BootForm.Controls.Add($TextBoxCustom);
-
-    $RadioCustom.Add_CheckedChanged({
-        $TextBoxCustom.Enabled = $RadioCustom.Checked;
-    });
-
-    $ApplyBtn = New-Object System.Windows.Forms.Button;
-    $ApplyBtn.Text = "Apply";
-    $ApplyBtn.Location = New-Object System.Drawing.Point(80, 110);
-    $ApplyBtn.DialogResult = [System.Windows.Forms.DialogResult]::OK;
-    $BootForm.Controls.Add($ApplyBtn);
-
-    $CancelBtn = New-Object System.Windows.Forms.Button;
-    $CancelBtn.Text = "Cancel";
-    $CancelBtn.Location = New-Object System.Drawing.Point(180, 110);
-    $CancelBtn.DialogResult = [System.Windows.Forms.DialogResult]::Cancel;
-    $BootForm.Controls.Add($CancelBtn);
-
-    $BootForm.AcceptButton = $ApplyBtn;
-    $BootForm.CancelButton = $CancelBtn;
-
-    $result = $BootForm.ShowDialog();
-
-    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-        $newName = if ($RadioCustom.Checked -and -not [string]::IsNullOrWhiteSpace($TextBoxCustom.Text)) {
-            $TextBoxCustom.Text;
-        } else {
-            $defaultName;
-        };
-
-        $ScriptString = @"
-            `$newDesc = "$newName";
-            `$IsAdmin = ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator);
-            if (-not `$IsAdmin) {
-                Write-Error "Please run this script in PowerShell **as Administrator**.";
-                Start-Sleep -Seconds 3;
-                return;
-            }
-
-            Write-Host "Setting boot entry description to: `$newDesc";
-            & bcdedit /set '{current}' description "`$newDesc";
-
-            if (`$LASTEXITCODE -eq 0) {
-                Write-Host "`nUpdated. Current entries:";
-                & bcdedit /enum;
-            } else {
-                Write-Error "bcdedit failed with exit code `$LASTEXITCODE";
-            }
-
-            Write-Host "`nPress any key to close...";
-            `$null = `$Host.UI.RawUI.ReadKey('NoEcho,IncludeKeyDown');
-"@;
-        $Bytes = [System.Text.Encoding]::Unicode.GetBytes($ScriptString);
-        $Encoded = [Convert]::ToBase64String($Bytes);
-        Start-Process -FilePath "powershell.exe" -ArgumentList "-NoProfile -ExecutionPolicy Bypass -EncodedCommand $Encoded" -Verb RunAs;
-    }
-    $BootForm.Dispose();
-};
-
-Add-SideButton -Name "Rename Computer" -Code {
-    $RenameForm = New-Object System.Windows.Forms.Form;
-    $RenameForm.Text = "Rename Computer";
-    $RenameForm.Size = New-Object System.Drawing.Size(340, 170);$RenameForm.StartPosition = "CenterParent";
-    $RenameForm.FormBorderStyle = "FixedDialog";
-    $RenameForm.MaximizeBox =$false;
-
-    $CurrentNameLabel = New-FormLabel -Text "Current name: $env:COMPUTERNAME" -X 20 -Y 20;
-    $RenameForm.Controls.Add($CurrentNameLabel);
-
-    $NewNameLabel = New-FormLabel -Text "New name:" -X 20 -Y 55;
-    $RenameForm.Controls.Add($NewNameLabel);
-
-    $NewNameBox = New-Object System.Windows.Forms.TextBox;
-    $NewNameBox.Location = New-Object System.Drawing.Point(100, 52);
-    $NewNameBox.Size = New-Object System.Drawing.Size(200, 20);$NewNameBox.MaxLength = 15;
-    $RenameForm.Controls.Add($NewNameBox);
-
-    $ApplyBtn = New-Object System.Windows.Forms.Button;
-    $ApplyBtn.Text = "Apply";
-    $ApplyBtn.Location = New-Object System.Drawing.Point(80, 105);$ApplyBtn.DialogResult = [System.Windows.Forms.DialogResult]::OK;
-    $RenameForm.Controls.Add($ApplyBtn);
-
-    $CancelBtn = New-Object System.Windows.Forms.Button;
-    $CancelBtn.Text = "Cancel";
-    $CancelBtn.Location = New-Object System.Drawing.Point(180, 105);$CancelBtn.DialogResult = [System.Windows.Forms.DialogResult]::Cancel;
-    $RenameForm.Controls.Add($CancelBtn);
-
-    $RenameForm.AcceptButton =$ApplyBtn;
-    $RenameForm.CancelButton =$CancelBtn;
-
-    $result =$RenameForm.ShowDialog();
-
-    if ($result -eq [System.Windows.Forms.DialogResult]::OK) {
-        $newComputerName =$NewNameBox.Text.Trim();
-
-        if ([string]::IsNullOrWhiteSpace($newComputerName)) {
-            [System.Windows.Forms.MessageBox]::Show("Enter a computer name first.", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null;
-        } elseif ($newComputerName -notmatch '^[a-zA-Z0-9-]{1,15}$') {
-            [System.Windows.Forms.MessageBox]::Show("Names can only use letters, numbers, and hyphens (max 15 characters).", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Warning) | Out-Null;
-        } elseif ($newComputerName -eq$env:COMPUTERNAME) {
-            [System.Windows.Forms.MessageBox]::Show("That's already the current name.", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Information) | Out-Null;
-        } else {
-            try {
-                Rename-Computer -NewName ($newComputerName) -Force -ErrorAction Stop;
-                $confirmRestart = [System.Windows.Forms.MessageBox]::Show("Renamed to '$newComputerName'. This needs a restart to take effect. Restart now?", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::YesNo, [System.Windows.Forms.MessageBoxIcon]::Question);
-                if ($confirmRestart -eq [System.Windows.Forms.DialogResult]::Yes) {
-                    Restart-Computer -Force;
-                }
-            } catch {
-                [System.Windows.Forms.MessageBox]::Show("Rename failed: $($_.Exception.Message)", "Rename Computer", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error) | Out-Null;
-            }
-        }
-    }
-    $RenameForm.Dispose();
-};
+Add-SideButton -Name "xxxxxxxx" -Code {
+    Invoke-RestMethod -Uri "$GithubBase/scripts/xxxxxxxxxx" | Invoke-Expression
+}
 
 Add-SideButton -Name "Upgrade All" -Code {
-    Start-Process -FilePath "powershell.exe" -ArgumentList "-NoExit -NoProfile -ExecutionPolicy Bypass -Command `"winget upgrade --all --accept-package-agreements --accept-source-agreements`"" -Verb RunAs;
-};
+    Invoke-RestMethod -Uri "$GithubBase/scripts/UpgradeAll.ps1" | Invoke-Expression
+}
 
 # ================================================================================
 
