@@ -1,1 +1,0 @@
-Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/refs/heads/main/LaunchDeck.ps1' -OutFile "$env:PUBLIC\Desktop\LaunchDeck.ps1"
