@@ -366,15 +366,34 @@ try {
         }
         
         
-$DownloadUrl =$scriptFile.download_url;
-        
-        # Create a scriptblock that injects the exact URL and launches a new process.
-        # -NoExit keeps the window open so you can see if the script throws errors.
-        $Action = [scriptblock]::Create("
-            Start-Process -FilePath 'powershell.exe' -ArgumentList '-NoExit', '-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', `"Invoke-RestMethod -Uri '$DownloadUrl' -UseBasicParsing | Invoke-Expression`"
-        ")
+        $DownloadUrl = $scriptFile.download_url;
+        $ButtonName = [System.IO.Path]::GetFileNameWithoutExtension($scriptFile.name);
 
-        Add-SideButton -Name $ButtonName -IconUrl $MatchedIconUrl -Code$Action;
+# Use literal placeholders instead of {0} and {1} to avoid curly brace conflicts
+$BlockTemplate = @'
+try {
+$url = "URL_PLACEHOLDER"
+$name = "NAME_PLACEHOLDER"
+$TempFile = Join-Path $env:TEMP "$name.ps1"
+
+Invoke-WebRequest -Uri $url -OutFile $TempFile -UseBasicParsing -ErrorAction Stop
+
+# -NoNewWindow routes all text output and input prompts to the original shell window.
+# -Wait pauses the main GUI so it safely waits for the sub-script to finish.
+# Note: -NoExit is removed so the process cleanly returns control to LaunchDeck when it ends.
+$Args = '-NoProfile -ExecutionPolicy Bypass -File "' + $TempFile + '"'
+Start-Process -FilePath "powershell.exe" -ArgumentList $Args -NoNewWindow -Wait -ErrorAction Stop
+
+} catch {
+[System.Windows.Forms.MessageBox]::Show("Failed to launch $name : " + $_.Exception.Message, "Launch Error", 0, 16) | Out-Null
+}
+'@
+
+# Safely inject the actual URL and Button Name using simple string replacement
+$BlockCode = $BlockTemplate.Replace("URL_PLACEHOLDER", $DownloadUrl).Replace("NAME_PLACEHOLDER", $ButtonName)
+$Action = [scriptblock]::Create($BlockCode);
+
+Add-SideButton -Name $ButtonName -IconUrl $MatchedIconUrl -Code $Action;
 
 
     }
