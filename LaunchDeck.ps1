@@ -145,6 +145,10 @@ $WingetAppsMap = [ordered]@{
         Id   = "WhatsApp.WhatsApp"
         Domain = "whatsapp.com"
     }
+    "StirlingPDF" = @{
+        Id   = "StirlingTools.StirlingPDF"
+        Domain = "https://www.stirling.com/"
+    }
 }
 
 # --- GUI Creation (Windows Forms) -----------------------------------------------
