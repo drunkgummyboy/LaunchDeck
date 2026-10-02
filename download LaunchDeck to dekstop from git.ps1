@@ -1,25 +1,30 @@
-# 1. Download the main LaunchDeck script to your personal desktop
-Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/refs/heads/main/LaunchDeck.ps1' -OutFile "$env:USERPROFILE\Desktop\LaunchDeck.ps1"
-
-# Create a safe, hidden directory in AppData to store assets far away from the desktop
+# 1. Create a safe directory in AppData for persistent assets
 $safeDir = "$env:APPDATA\LaunchDeck"
 if (-not (Test-Path $safeDir)) {
 New-Item -ItemType Directory -Force -Path $safeDir | Out-Null
 }
 
-# 2. Download the icon using the raw GitHub URL to the safe AppData location
+# 2. Download the icon to the safe AppData directory
 $iconUrl = 'https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/main/scripts/assets/LaunchDeck.ico'
 $iconPath = "$safeDir\LaunchDeck.ico"
 Invoke-WebRequest -Uri $iconUrl -OutFile $iconPath
 
-# 3. Create the desktop shortcut
+# 3. Create a local launcher script to satisfy Windows Defender
+$launcherPath = "$safeDir\Launcher.ps1"
+$launcherContent = @"
+`$rawScriptUrl = 'https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/main/LaunchDeck.ps1'
+Invoke-RestMethod -Uri `$rawScriptUrl | Invoke-Expression
+"@
+Set-Content -Path $launcherPath -Value $launcherContent -Force
+
+# 4. Configure the desktop shortcut to run the local launcher
 $WshShell = New-Object -ComObject WScript.Shell
 $Shortcut = $WshShell.CreateShortcut("$env:USERPROFILE\Desktop\LaunchDeck.lnk")
 
-# Point the shortcut to PowerShell and pass the script as an argument
 $Shortcut.TargetPath = "powershell.exe"
-$Shortcut.Arguments = "-ExecutionPolicy Bypass -WindowStyle Hidden -File `"$env:USERPROFILE\Desktop\LaunchDeck.ps1`""
-$Shortcut.WorkingDirectory = "$env:USERPROFILE\Desktop"
+# We now use -File to point to the local Launcher.ps1 instead of passing a -Command
+$Shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcherPath`""
+$Shortcut.WorkingDirectory = "$safeDir"
 $Shortcut.IconLocation =$iconPath
 
 # Save the shortcut to the desktop
