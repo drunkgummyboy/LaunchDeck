@@ -76,5 +76,9 @@ Domain = "whatsapp.com"
 Id   = "StirlingTools.StirlingPDF"
 Domain = "https://www.stirling.com/"
 }
+"PowerShell" = @{
+Id   = "Microsoft.PowerShell"
+Domain = "learn.microsoft.com"
+}
 }
 
