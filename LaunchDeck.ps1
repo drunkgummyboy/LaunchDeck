@@ -391,21 +391,28 @@ $ButtonName = [System.IO.Path]::GetFileNameWithoutExtension($scriptFile.name);
 
 # Use literal placeholders instead of {0} and {1} to avoid curly brace conflicts
 $BlockTemplate = @'
+# 1. Force a visible popup to confirm the click event is actually firing
+[System.Windows.Forms.MessageBox]::Show("Button clicked! Attempting to launch NAME_PLACEHOLDER...", "Debug", 0, 64) | Out-Null
+
 try {
-$url = "URL_PLACEHOLDER"
-$name = "NAME_PLACEHOLDER"
-$TempFile = Join-Path $env:TEMP "$name.ps1"
+    $url = "URL_PLACEHOLDER"
+    $name = "NAME_PLACEHOLDER"
+    $TempFile = Join-Path $env:TEMP "$name.ps1"
 
-Invoke-WebRequest -Uri $url -OutFile$TempFile -UseBasicParsing -ErrorAction Stop
+    # Download the raw script
+    Invoke-WebRequest -Uri $url -OutFile$TempFile -UseBasicParsing -ErrorAction Stop
 
-# -NoNewWindow routes all text output and input prompts to the original shell window.
-# -Wait pauses the main GUI so it safely waits for the sub-script to finish.
-# Note: -NoExit is removed so the process cleanly returns control to LaunchDeck when it ends.
-$Args = '-NoProfile -ExecutionPolicy Bypass -File "' + $TempFile + '"'
-Start-Process -FilePath "powershell.exe" -ArgumentList $Args -NoNewWindow -Wait -ErrorAction Stop
+    # Wrap the file path in literal quotes so scripts with spaces don't break
+    $QuotedPath = "`"$TempFile`""
+
+    # Pass arguments as a single string to avoid PowerShell array-parsing bugs
+    $ArgString = "-NoExit -NoProfile -ExecutionPolicy Bypass -File $QuotedPath"
+    
+    # Removed -Wait. Waiting on a GUI thread freezes the entire app, which can swallow the window.
+    Start-Process -FilePath "powershell.exe" -ArgumentList $ArgString -ErrorAction Stop
 
 } catch {
-[System.Windows.Forms.MessageBox]::Show("Failed to launch $name : " + $_.Exception.Message, "Launch Error", 0, 16) | Out-Null
+    [System.Windows.Forms.MessageBox]::Show("Error: " + $_.Exception.Message, "Launch Error", 0, 16) | Out-Null
 }
 '@
 
