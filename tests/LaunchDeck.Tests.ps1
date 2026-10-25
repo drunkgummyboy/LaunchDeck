@@ -322,6 +322,48 @@ Test-It 'New-LdDesktopShortcut creates a shortcut that runs the launcher' {
     }
 }
 
+# ---------------- Shared folder hardening (security review) ----------------
+
+Test-It 'New-LdSharedAcl lets only admins and SYSTEM change the folder' {
+    $acl = New-LdSharedAcl
+    Assert-True $acl.AreAccessRulesProtected 'inheritance from ProgramData should be cut'
+    $rules = @($acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier]))
+    Assert-Equal @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-32-545') ($rules | ForEach-Object { $_.IdentityReference.Value } | Sort-Object)
+    $users = $rules | Where-Object { $_.IdentityReference.Value -eq 'S-1-5-32-545' }
+    $write = [Security.AccessControl.FileSystemRights]::Write -bor [Security.AccessControl.FileSystemRights]::Delete -bor [Security.AccessControl.FileSystemRights]::ChangePermissions
+    Assert-Equal 0 ([int]($users.FileSystemRights -band $write)) 'Users must not be able to write, delete or change permissions'
+}
+
+Test-It 'Initialize-LdSharedFolder removes a junction without touching its target' {
+    $root = Join-Path $env:TEMP "ld-test-$PID-shared"
+    $target = Join-Path $root 'target'
+    $link = Join-Path $root 'LaunchDeck'
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
+    [IO.File]::WriteAllText((Join-Path $target 'keep.txt'), 'keep')
+    cmd.exe /c mklink /J "$link" "$target" | Out-Null
+    try {
+        Initialize-LdSharedFolder -Path $link -SkipAcl
+        $item = Get-Item -LiteralPath $link -Force
+        Assert-True (-not ($item.Attributes -band [IO.FileAttributes]::ReparsePoint)) 'the junction should be replaced by a real folder'
+        Assert-True (Test-Path -LiteralPath (Join-Path $target 'keep.txt')) 'the junction target must be left alone'
+    } finally {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Test-It 'Initialize-LdSharedFolder clears a folder that an admin did not create' {
+    $path = Join-Path $env:TEMP "ld-test-$PID-owned"
+    New-Item -ItemType Directory -Force -Path $path | Out-Null
+    [IO.File]::WriteAllText((Join-Path $path 'Launcher.ps1'), 'planted')
+    try {
+        Initialize-LdSharedFolder -Path $path -SkipAcl
+        Assert-True (Test-Path -LiteralPath $path) 'the folder should exist again'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $path 'Launcher.ps1'))) 'files planted by a non-admin should be gone'
+    } finally {
+        Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ---------------- summary ----------------
 Write-Host ''
 Write-Host "$script:Passed passed, $script:Failed failed"

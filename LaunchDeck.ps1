@@ -197,9 +197,48 @@ function Get-LdDataDir {
     $dir
 }
 
+# Administrators + SYSTEM: full control. Users: read and run. Nothing inherited from ProgramData.
+function New-LdSharedAcl {
+    $acl = New-Object Security.AccessControl.DirectorySecurity
+    $acl.SetAccessRuleProtection($true, $false)
+    $inherit = [Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+    foreach ($entry in @(@('S-1-5-32-544', 'FullControl'), @('S-1-5-18', 'FullControl'), @('S-1-5-32-545', 'ReadAndExecute'))) {
+        $sid = New-Object Security.Principal.SecurityIdentifier($entry[0])
+        $acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid, $entry[1], $inherit, 'None', 'Allow')))
+    }
+    $acl
+}
+
+# C:\ProgramData\LaunchDeck is written by the elevated app and read by every user, so only admins may
+# change it. A junction, or a folder some other account created first, is removed before use.
+function Initialize-LdSharedFolder {
+    param([Parameter(Mandatory)][string]$Path, [switch]$SkipAcl)
+    $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+    if ($item) {
+        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+            [IO.Directory]::Delete($Path)   # removes the link only
+        } elseif (-not $item.PSIsContainer) {
+            Remove-Item -LiteralPath $Path -Force
+        } else {
+            $owner = try { (Get-Acl -LiteralPath $Path).GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { '' }
+            if ($owner -notin 'S-1-5-32-544', 'S-1-5-18') { [IO.Directory]::Delete($Path, $true) }   # never follows junctions
+        }
+    }
+    if (-not (Test-Path -LiteralPath $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
+    if (-not $SkipAcl) { Set-Acl -LiteralPath $Path -AclObject (New-LdSharedAcl) }
+}
+
+# Admin runs log to the locked-down ProgramData folder; practice runs (not admin) to %TEMP%.
 function New-LdLogFile {
     $name = 'LaunchDeck_{0:yyyyMMdd_HHmmss}.log' -f (Get-Date)
-    foreach ($dir in @((Join-Path $env:ProgramData 'LaunchDeck\logs'), (Join-Path $env:TEMP 'LaunchDeck'))) {
+    $dirs = @(Join-Path $env:TEMP 'LaunchDeck')
+    if (Test-LdAdmin) {
+        try {
+            Initialize-LdSharedFolder -Path (Join-Path $env:ProgramData 'LaunchDeck')
+            $dirs = @(Join-Path $env:ProgramData 'LaunchDeck\logs') + $dirs
+        } catch { }
+    }
+    foreach ($dir in $dirs) {
         try {
             if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
             $path = Join-Path $dir $name
@@ -353,12 +392,16 @@ if (-not (Test-Path -LiteralPath $script)) {
     $text.Replace('{{RawUrl}}', (Get-LdRawUrl -Path 'LaunchDeck.ps1'))
 }
 
+# -Shared: $DataDir is the all-users folder in ProgramData, so lock it down and replace its files
+# (deleting first also breaks any planted hard link).
 function New-LdDesktopShortcut {
-    param([Parameter(Mandatory)][string]$Desktop, [Parameter(Mandatory)][string]$DataDir)
-    if (-not (Test-Path -LiteralPath $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
+    param([Parameter(Mandatory)][string]$Desktop, [Parameter(Mandatory)][string]$DataDir, [switch]$Shared)
+    if ($Shared) { Initialize-LdSharedFolder -Path $DataDir }
+    elseif (-not (Test-Path -LiteralPath $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
     $launcher = Join-Path $DataDir 'Launcher.ps1'
-    [IO.File]::WriteAllText($launcher, (Get-LdLauncherText), (New-Object Text.UTF8Encoding $true))
     $icon = Join-Path $DataDir 'LaunchDeck.ico'
+    if ($Shared) { Remove-Item -LiteralPath $launcher, $icon -Force -ErrorAction SilentlyContinue }
+    [IO.File]::WriteAllText($launcher, (Get-LdLauncherText), (New-Object Text.UTF8Encoding $true))
     if (-not (Test-Path -LiteralPath $icon)) { [void](Save-LdFile -Url (Get-LdRawUrl -Path 'scripts/assets/LaunchDeck.ico') -Path $icon) }
 
     $lnkPath = Join-Path $Desktop 'LaunchDeck.lnk'
@@ -376,7 +419,7 @@ function New-LdDesktopShortcut {
 $script:LdShortcutWorker = {
     try {
         $target = Get-LdShortcutTarget
-        $path = New-LdDesktopShortcut -Desktop $target.Desktop -DataDir $target.DataDir
+        $path = New-LdDesktopShortcut -Desktop $target.Desktop -DataDir $target.DataDir -Shared:$target.Public
         Send-LdEvent -Type 'ShortcutDone' -Data @{ Path = $path; Public = $target.Public }
     } catch {
         Send-LdEvent -Type 'ShortcutFailed' -Data "The desktop shortcut couldn't be created.`n`n$($_.Exception.Message)"

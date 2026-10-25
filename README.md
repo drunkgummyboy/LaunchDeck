@@ -44,6 +44,7 @@ a description or an icon, add a line to [tools.json](tools.json):
 
 ## Logs and tests
 
-- Every run writes a log to `C:\ProgramData\LaunchDeck\logs`. The **Open log** button opens it.
+- Every run writes a log to `C:\ProgramData\LaunchDeck\logs` (practice mode: `%TEMP%\LaunchDeck`).
+  The **Open log** button opens it.
 - Tests: `powershell -NoProfile -File tests\LaunchDeck.Tests.ps1`
 - Screenshot of the window without showing it: `powershell -NoProfile -File tests\Snap-LaunchDeck.ps1`
