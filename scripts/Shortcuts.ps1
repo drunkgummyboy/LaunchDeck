@@ -77,16 +77,20 @@ $batchContent =$batchPart1 + "`r`n" + $batchPart2;
 Write-Host "Creating shortcuts on the Desktop..." -ForegroundColor:Cyan;
 $WS = New-Object -ComObject WScript.Shell;
 
+# 1. Downloads Shortcut (Bypass 'shell:' and use absolute path)
 $s1 = $WS.CreateShortcut("$dt\Downloads.lnk");
-$s1.TargetPath = "explorer.exe";
-$s1.Arguments = "shell:Downloads";
+$s1.TargetPath = "$env:windir\explorer.exe";
+$s1.Arguments = "`"$env:USERPROFILE\Downloads`"";
+$s1.WorkingDirectory = "$env:USERPROFILE\Downloads";
 $s1.IconLocation = "$dir\Downloads.ico, 0";
 $s1.Description = "Open Downloads Folder";
 $s1.Save();
 
+# 2. Move Torrents Shortcut (Use Explorer to execute the batch file)
 $s2 = $WS.CreateShortcut("$dt\Move Torrents.lnk");
-$s2.TargetPath = "cmd.exe";
-$s2.Arguments = "/c `"$bat`"";
+$s2.TargetPath = "$env:windir\explorer.exe";
+$s2.Arguments = "`"$bat`"";
+$s2.WorkingDirectory = "$dir";
 $s2.IconLocation = "$dir\MoveTorrentFiles.ico, 0";
 $s2.Description = "Move .torrent files";
 $s2.Save();
@@ -98,8 +102,9 @@ $s3.IconLocation = "$dir\airgrabber.ico, 0";
 $s3.Description = "Launch AirGrabber safely";
 $s3.Save();
 
+# Changed TargetPath to absolute PowerShell path for consistency
 $s4 = $WS.CreateShortcut("$dt\CTT WinUtill.lnk");
-$s4.TargetPath = "powershell.exe";
+$s4.TargetPath = "$env:windir\System32\WindowsPowerShell\v1.0\powershell.exe";
 $s4.Arguments = "-NoProfile -Command `"iex (irm 'https://christitus.com/win')`"";
 $s4.IconLocation = "$dir\CTTtools.ico, 0";
 $s4.Description = "Launch Chris Titus Windows Utility";
