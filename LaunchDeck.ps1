@@ -310,6 +310,80 @@ function Start-LaunchDeck {
 }
 
 # ============================================================================
+#  Desktop shortcut ("Add to desktop")
+# ============================================================================
+
+# When a standard user elevated with another (admin) account, "my Desktop" would be the admin's,
+# so the shortcut goes on the Public Desktop with its launcher in ProgramData.
+function Get-LdShortcutTarget {
+    param(
+        [string]$ConsoleUser = $(try { [string](Get-CimInstance -ClassName Win32_ComputerSystem -ErrorAction Stop).UserName } catch { '' }),
+        [string]$CurrentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    )
+    if ($ConsoleUser -and $ConsoleUser -ne $CurrentUser) {
+        return @{ Desktop = (Join-Path $env:PUBLIC 'Desktop'); DataDir = (Join-Path $env:ProgramData 'LaunchDeck'); Public = $true }
+    }
+    @{ Desktop = [Environment]::GetFolderPath('Desktop'); DataDir = (Join-Path $env:LOCALAPPDATA 'LaunchDeck'); Public = $false }
+}
+
+# The shortcut runs this small launcher (Defender dislikes `irm | iex` inside a shortcut).
+# It caches LaunchDeck in the profile of whoever clicks the shortcut.
+function Get-LdLauncherText {
+    $text = @'
+# LaunchDeck launcher, made by the "Add to desktop" button.
+# Gets the newest LaunchDeck from GitHub (or uses the last copy when offline) and starts it.
+$ProgressPreference = 'SilentlyContinue'
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$dir = Join-Path $env:LOCALAPPDATA 'LaunchDeck'
+if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+$script = Join-Path $dir 'LaunchDeck.ps1'
+try {
+    $response = Invoke-WebRequest -Uri '{{RawUrl}}' -UseBasicParsing -TimeoutSec 15 -Headers @{ 'User-Agent' = 'LaunchDeck' }
+    $text = [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray()).TrimStart([char]0xFEFF)
+    [IO.File]::WriteAllText("$script.new", $text, (New-Object Text.UTF8Encoding $true))
+    Move-Item -LiteralPath "$script.new" -Destination $script -Force
+} catch { }
+if (-not (Test-Path -LiteralPath $script)) {
+    Add-Type -AssemblyName PresentationFramework
+    [void][System.Windows.MessageBox]::Show("LaunchDeck couldn't be downloaded from GitHub.`n`nCheck the internet connection and try again.", 'LaunchDeck', 'OK', 'Error')
+    exit 1
+}
+& $script
+'@
+    $text.Replace('{{RawUrl}}', (Get-LdRawUrl -Path 'LaunchDeck.ps1'))
+}
+
+function New-LdDesktopShortcut {
+    param([Parameter(Mandatory)][string]$Desktop, [Parameter(Mandatory)][string]$DataDir)
+    if (-not (Test-Path -LiteralPath $DataDir)) { New-Item -ItemType Directory -Path $DataDir -Force | Out-Null }
+    $launcher = Join-Path $DataDir 'Launcher.ps1'
+    [IO.File]::WriteAllText($launcher, (Get-LdLauncherText), (New-Object Text.UTF8Encoding $true))
+    $icon = Join-Path $DataDir 'LaunchDeck.ico'
+    if (-not (Test-Path -LiteralPath $icon)) { [void](Save-LdFile -Url (Get-LdRawUrl -Path 'scripts/assets/LaunchDeck.ico') -Path $icon) }
+
+    $lnkPath = Join-Path $Desktop 'LaunchDeck.lnk'
+    $shortcut = (New-Object -ComObject WScript.Shell).CreateShortcut($lnkPath)
+    $shortcut.TargetPath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+    $shortcut.Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$launcher`""
+    $shortcut.WorkingDirectory = $DataDir
+    if (Test-Path -LiteralPath $icon) { $shortcut.IconLocation = "$icon,0" }
+    $shortcut.Description = 'Set up this PC with LaunchDeck'
+    $shortcut.Save()
+    Write-LdLog "Desktop shortcut written: $lnkPath"
+    $lnkPath
+}
+
+$script:LdShortcutWorker = {
+    try {
+        $target = Get-LdShortcutTarget
+        $path = New-LdDesktopShortcut -Desktop $target.Desktop -DataDir $target.DataDir
+        Send-LdEvent -Type 'ShortcutDone' -Data @{ Path = $path; Public = $target.Public }
+    } catch {
+        Send-LdEvent -Type 'ShortcutFailed' -Data "The desktop shortcut couldn't be created.`n`n$($_.Exception.Message)"
+    }
+}
+
+# ============================================================================
 #  Background workers (a runspace pool; workers talk to the window via events)
 # ============================================================================
 
@@ -1230,6 +1304,21 @@ function Update-LdSearch {
     Update-LdView
 }
 
+function Update-LdShortcutButton {
+    $button = $script:Ui.ShortcutButton
+    $exists = (Test-Path -LiteralPath (Join-Path ([Environment]::GetFolderPath('Desktop')) 'LaunchDeck.lnk')) -or
+              (Test-Path -LiteralPath (Join-Path $env:PUBLIC 'Desktop\LaunchDeck.lnk'))
+    $button.Content = if ($exists) { "On desktop $([char]0x2713)" } else { 'Add to desktop' }
+    $button.ToolTip = if ($exists) { 'Click to rebuild the LaunchDeck shortcut on the desktop' } else { 'Put a LaunchDeck shortcut on the desktop' }
+    $button.IsEnabled = $true
+}
+
+function Start-LdShortcut {
+    $script:Ui.ShortcutButton.IsEnabled = $false
+    $script:Ui.ShortcutButton.Content = 'Adding...'
+    Start-LdWorker -ScriptBlock $script:LdShortcutWorker
+}
+
 # ---- Install view -----------------------------------------------------------
 
 function New-LdInstallRow {
@@ -1421,6 +1510,13 @@ function Invoke-LdEvents {
                 'AppOutput'   { Add-LdDetail -Id $evt.Data.Id -Line $evt.Data.Line }
                 'WingetSetup' { Set-LdRowStatus -Id 'winget-setup' -Status $evt.Data.Status }
                 'EngineDone'  { Complete-LdInstall -Data $evt.Data }
+                'ShortcutDone' {
+                    Update-LdShortcutButton
+                    if ($evt.Data.Public) {
+                        [void][System.Windows.MessageBox]::Show("LaunchDeck is running as a different account than the one signed in, so the shortcut was put on the desktop for all users.", 'LaunchDeck', 'OK', 'Information')
+                    }
+                }
+                'ShortcutFailed' { Update-LdShortcutButton; Show-LdError -Message $evt.Data }
                 default       { Write-LdLog "Unknown event: $($evt.Type)" }
             }
         } catch {
@@ -1474,6 +1570,8 @@ function New-LdWindow {
     $script:Ui.SelectNoneButton.Add_Click({ Set-LdVisibleChecked -Value $false })
     $script:Ui.CloseButton.Add_Click({ $script:Ui.Window.Close() })
     $script:Ui.InstallButton.Add_Click({ Start-LdInstall })
+    $script:Ui.ShortcutButton.Add_Click({ Start-LdShortcut })
+    Update-LdShortcutButton
     $script:Ui.StopButton.Add_Click({
         $LdSync.StopAfterCurrent = $true
         $script:Ui.StopButton.IsEnabled = $false

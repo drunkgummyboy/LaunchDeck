@@ -284,6 +284,44 @@ Test-It 'Test-LdNoiseLine drops winget progress output' {
     }
 }
 
+# ---------------- Task 5: desktop shortcut ----------------
+
+Test-It 'Get-LdShortcutTarget uses the Public Desktop when someone else elevated' {
+    $same = Get-LdShortcutTarget -ConsoleUser 'PC\beau' -CurrentUser 'PC\beau'
+    Assert-Equal ([Environment]::GetFolderPath('Desktop')) $same.Desktop
+    Assert-True (-not $same.Public) 'same user should use their own desktop'
+    $unknown = Get-LdShortcutTarget -ConsoleUser '' -CurrentUser 'PC\beau'
+    Assert-True (-not $unknown.Public) 'unknown console user (e.g. remote desktop) should use their own desktop'
+
+    $other = Get-LdShortcutTarget -ConsoleUser 'PC\kid' -CurrentUser 'PC\admin'
+    Assert-Equal (Join-Path $env:PUBLIC 'Desktop') $other.Desktop
+    Assert-Equal (Join-Path $env:ProgramData 'LaunchDeck') $other.DataDir
+    Assert-True $other.Public 'a different console user should get the Public Desktop'
+}
+
+Test-It 'New-LdDesktopShortcut creates a shortcut that runs the launcher' {
+    $root = Join-Path $env:TEMP "ld-test-$PID-shortcut"
+    $desktop = Join-Path $root 'Desktop'
+    $data = Join-Path $root 'Data'
+    New-Item -ItemType Directory -Force -Path $desktop, $data | Out-Null
+    try {
+        $lnkPath = New-LdDesktopShortcut -Desktop $desktop -DataDir $data
+        Assert-Equal (Join-Path $desktop 'LaunchDeck.lnk') $lnkPath
+        Assert-True (Test-Path -LiteralPath $lnkPath) 'shortcut file should exist'
+        $lnk = (New-Object -ComObject WScript.Shell).CreateShortcut($lnkPath)
+        Assert-True ($lnk.TargetPath -like '*\WindowsPowerShell\v1.0\powershell.exe') "target was $($lnk.TargetPath)"
+        Assert-True ($lnk.Arguments -like "*-WindowStyle Hidden -File `"$data\Launcher.ps1`"*") "arguments were $($lnk.Arguments)"
+        $launcher = Get-Content -Raw -LiteralPath (Join-Path $data 'Launcher.ps1')
+        Assert-True ($launcher.Contains('https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/main/LaunchDeck.ps1')) 'launcher should download LaunchDeck.ps1'
+        Assert-True ($launcher.Contains('$env:LOCALAPPDATA')) 'launcher should cache in the running user''s profile'
+        $errors = $null
+        [void][Management.Automation.Language.Parser]::ParseInput($launcher, [ref]$null, [ref]$errors)
+        Assert-Equal 0 $errors.Count 'launcher should be valid PowerShell'
+    } finally {
+        Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # ---------------- summary ----------------
 Write-Host ''
 Write-Host "$script:Passed passed, $script:Failed failed"
