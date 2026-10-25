@@ -5,7 +5,13 @@ helper scripts from this repo.
 
 ## Start it
 
-On any Windows 10/11 PC, open PowerShell and paste:
+On any Windows 10/11 PC, open PowerShell and type:
+
+```powershell
+irm is.gd/launchdeck | iex
+```
+
+`is.gd/launchdeck` is a short link to `LaunchDeck.ps1` on GitHub. If it ever stops working, use the full address:
 
 ```powershell
 irm https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/main/LaunchDeck.ps1 | iex
