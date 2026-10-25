@@ -159,6 +159,53 @@ Test-It 'Get-LdSummary groups names by status' {
     Assert-Equal @('Gamma') $s.Failed
 }
 
+# ---------------- Task 2: startup ----------------
+
+Test-It 'Get-LdLaunchPlan picks how to start' {
+    $cases = @(
+        # IsAdmin, SelfPath,        Edition,   Practice, expected
+        @($false, 'C:\x\LD.ps1', 'Desktop', $true,  'Run'),
+        @($false, '',            'Desktop', $true,  'Run'),
+        @($true,  'C:\x\LD.ps1', 'Desktop', $false, 'Run'),
+        @($true,  '',            'Desktop', $false, 'Run'),
+        @($false, 'C:\x\LD.ps1', 'Desktop', $false, 'ElevateFile'),
+        @($false, '',            'Desktop', $false, 'DownloadThenElevate'),
+        @($false, 'C:\x\LD.ps1', 'Core',    $true,  'RelaunchFile'),
+        @($true,  'C:\x\LD.ps1', 'Core',    $false, 'ElevateFile'),
+        @($true,  '',            'Core',    $false, 'DownloadThenElevate')
+    )
+    foreach ($c in $cases) {
+        $plan = Get-LdLaunchPlan -IsAdmin $c[0] -SelfPath $c[1] -Edition $c[2] -Practice $c[3]
+        Assert-Equal $c[4] $plan "for admin=$($c[0]) path='$($c[1])' edition=$($c[2]) practice=$($c[3])"
+    }
+}
+
+Test-It 'Get-LdText returns null fast on refused connection' {
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    $text = Get-LdText -Url 'http://127.0.0.1:9/nothing'
+    Assert-True ($null -eq $text) 'refused connection should give $null'
+    Assert-True ($watch.Elapsed.TotalSeconds -lt 10) "took $($watch.Elapsed.TotalSeconds) s"
+}
+
+Test-It 'Get-LdText prefers local file' {
+    $tmp = Join-Path $env:TEMP "ld-test-$PID.json"
+    [IO.File]::WriteAllText($tmp, 'abc')
+    try { Assert-Equal 'abc' (Get-LdText -Url 'http://127.0.0.1:9/nothing' -LocalPath $tmp) }
+    finally { Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue }
+}
+
+Test-It 'Write-LdLog appends timestamped lines to the log file' {
+    $log = Join-Path $env:TEMP "ld-test-$PID.log"
+    Remove-Item -LiteralPath $log -ErrorAction SilentlyContinue
+    Initialize-LdSync -LogFile $log
+    Write-LdLog 'first line'
+    Write-LdLog 'second line'
+    $lines = @(Get-Content -LiteralPath $log)
+    Remove-Item -LiteralPath $log -ErrorAction SilentlyContinue
+    Assert-Equal 2 $lines.Count
+    Assert-True ($lines[1] -match '^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d  second line$') "unexpected line: $($lines[1])"
+}
+
 # ---------------- summary ----------------
 Write-Host ''
 Write-Host "$script:Passed passed, $script:Failed failed"

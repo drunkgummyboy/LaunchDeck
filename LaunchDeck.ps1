@@ -169,5 +169,147 @@ function Get-LdSummary {
     }
 }
 
+# ============================================================================
+#  Startup, logging, downloads
+# ============================================================================
+
+# Run       - open the window in this process
+# RelaunchFile / ElevateFile - start this file again in Windows PowerShell (elevated for ElevateFile)
+# DownloadThenElevate - no file to relaunch (irm | iex), so save a copy first
+function Get-LdLaunchPlan {
+    param([bool]$IsAdmin, [string]$SelfPath, [string]$Edition, [bool]$Practice)
+    $isDesktop = $Edition -eq 'Desktop'
+    if ($isDesktop -and ($Practice -or $IsAdmin)) { return 'Run' }
+    if (-not $SelfPath) { return 'DownloadThenElevate' }
+    if ($Practice) { return 'RelaunchFile' }
+    'ElevateFile'
+}
+
+function Test-LdAdmin {
+    ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Get-LdDataDir {
+    param([string]$Child = '')
+    $dir = Join-Path $env:LOCALAPPDATA 'LaunchDeck'
+    if ($Child) { $dir = Join-Path $dir $Child }
+    if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    $dir
+}
+
+function New-LdLogFile {
+    $name = 'LaunchDeck_{0:yyyyMMdd_HHmmss}.log' -f (Get-Date)
+    foreach ($dir in @((Join-Path $env:ProgramData 'LaunchDeck\logs'), (Join-Path $env:TEMP 'LaunchDeck'))) {
+        try {
+            if (-not (Test-Path -LiteralPath $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+            $path = Join-Path $dir $name
+            [IO.File]::AppendAllText($path, '')
+            return $path
+        } catch { }
+    }
+    $null
+}
+
+# Shared state between the window and the background workers.
+function Initialize-LdSync {
+    param([string]$LogFile)
+    $script:LdSync = [hashtable]::Synchronized(@{
+        Events           = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
+        Pending          = New-Object 'System.Collections.Concurrent.ConcurrentQueue[object]'
+        StopAfterCurrent = $false
+        LogLock          = New-Object object
+        LogFile          = $LogFile
+    })
+}
+
+function Write-LdLog {
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Message)
+    if (-not $LdSync -or -not $LdSync.LogFile) { return }
+    $line = '{0:yyyy-MM-dd HH:mm:ss}  {1}' -f (Get-Date), $Message
+    [Threading.Monitor]::Enter($LdSync.LogLock)
+    try { [IO.File]::AppendAllText($LdSync.LogFile, $line + [Environment]::NewLine) } catch { }
+    finally { [Threading.Monitor]::Exit($LdSync.LogLock) }
+}
+
+function Show-LdError {
+    param([Parameter(Mandatory)][string]$Message)
+    Write-LdLog "ERROR: $Message"
+    try {
+        Add-Type -AssemblyName PresentationFramework
+        [void][System.Windows.MessageBox]::Show($Message, 'LaunchDeck', 'OK', 'Error')
+    } catch { Write-Host $Message -ForegroundColor Red }
+}
+
+# Text from a local file (when it exists) or a URL; $null on any failure.
+function Get-LdText {
+    param([Parameter(Mandatory)][string]$Url, [string]$LocalPath)
+    if ($LocalPath -and (Test-Path -LiteralPath $LocalPath)) { return [IO.File]::ReadAllText($LocalPath) }
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        $response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 10 -Headers @{ 'User-Agent' = 'LaunchDeck' }
+        [Text.Encoding]::UTF8.GetString($response.RawContentStream.ToArray()).TrimStart([char]0xFEFF)
+    } catch { $null }
+}
+
+function Save-LdFile {
+    param([Parameter(Mandatory)][string]$Url, [Parameter(Mandatory)][string]$Path)
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        Invoke-WebRequest -Uri $Url -OutFile $Path -UseBasicParsing -TimeoutSec 10 -Headers @{ 'User-Agent' = 'LaunchDeck' }
+        $true
+    } catch {
+        Remove-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+        $false
+    }
+}
+
+# For irm | iex: there is no file to relaunch, so save the latest LaunchDeck.ps1 locally.
+function Save-LdSelfCopy {
+    $text = Get-LdText -Url (Get-LdRawUrl -Path 'LaunchDeck.ps1')
+    if (-not $text) {
+        Show-LdError "LaunchDeck couldn't be downloaded from GitHub.`n`nCheck the internet connection and try again."
+        return $null
+    }
+    $path = Join-Path (Get-LdDataDir) 'LaunchDeck.ps1'
+    # With a BOM, so Windows PowerShell reads the file as UTF-8.
+    [IO.File]::WriteAllText($path, $text, (New-Object Text.UTF8Encoding $true))
+    $path
+}
+
+function Start-LdSelf {
+    param([Parameter(Mandatory)][string]$Path, [switch]$Practice, [switch]$Elevate)
+    $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$Path`"")
+    if ($Practice) { $argList += '-Practice' }
+    $params = @{ FilePath = 'powershell.exe'; ArgumentList = $argList; WindowStyle = 'Hidden' }
+    if ($Elevate) { $params.Verb = 'RunAs' }
+    try { Start-Process @params | Out-Null }
+    catch {
+        if ($Elevate) { Show-LdError "LaunchDeck needs admin rights to install apps.`n`nStart it again and click Yes when Windows asks." }
+        else { Show-LdError "LaunchDeck couldn't restart itself.`n`n$($_.Exception.Message)" }
+    }
+}
+
+function Start-LaunchDeck {
+    param([switch]$Practice, [string]$SelfPath)
+    $ErrorActionPreference = 'Stop'
+    [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    try {
+        $plan = Get-LdLaunchPlan -IsAdmin (Test-LdAdmin) -SelfPath $SelfPath -Edition $PSVersionTable.PSEdition -Practice $Practice.IsPresent
+        switch ($plan) {
+            'Run'                 { Show-LdWindow -Practice:$Practice -SelfPath $SelfPath }
+            'RelaunchFile'        { Start-LdSelf -Path $SelfPath -Practice:$Practice }
+            'ElevateFile'         { Start-LdSelf -Path $SelfPath -Practice:$Practice -Elevate }
+            'DownloadThenElevate' {
+                $copy = Save-LdSelfCopy
+                if ($copy) { Start-LdSelf -Path $copy -Practice:$Practice -Elevate }
+            }
+        }
+    } catch {
+        Show-LdError "LaunchDeck stopped because of an unexpected error:`n`n$($_.Exception.Message)"
+    }
+}
+
 # Dot-sourcing (the tests do this) loads the functions without opening the window.
 if ($MyInvocation.InvocationName -eq '.') { return }
+
+Start-LaunchDeck -Practice:$Practice -SelfPath $PSCommandPath
