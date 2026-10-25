@@ -206,6 +206,29 @@ Test-It 'Write-LdLog appends timestamped lines to the log file' {
     Assert-True ($lines[1] -match '^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d  second line$') "unexpected line: $($lines[1])"
 }
 
+# ---------------- Task 3: window helpers ----------------
+
+Test-It 'Get-LdVisibleIds filters by category, or by search across all categories' {
+    $c = ConvertTo-LdCatalog -Json $CatalogJson
+    Assert-Equal @('VideoLAN.VLC') (Get-LdVisibleIds -Catalog $c -Category 'Media' -Search '')
+    Assert-Equal @('Microsoft.PowerShell') (Get-LdVisibleIds -Catalog $c -Category 'Media' -Search 'POWER')
+    Assert-Equal 3 @(Get-LdVisibleIds -Catalog $c -Category 'All' -Search '').Count
+    Assert-Equal @('VideoLAN.VLC') (Get-LdVisibleIds -Catalog $c -Category 'Media' -Search '   ')
+    Assert-Equal 0 @(Get-LdVisibleIds -Catalog $c -Category 'All' -Search 'zzz').Count
+}
+
+Test-It 'Test-LdImageFile rejects text file' {
+    $bad = Join-Path $env:TEMP "ld-test-$PID-bad.png"
+    [IO.File]::WriteAllText($bad, '<html><body>not an image</body></html>')
+    Assert-True (-not (Test-LdImageFile -Path $bad)) 'html should not count as an image'
+    Assert-True (-not (Test-Path -LiteralPath $bad)) 'a bad image file should be deleted'
+
+    $good = Join-Path $env:TEMP "ld-test-$PID-good.png"
+    [IO.File]::WriteAllBytes($good, [Convert]::FromBase64String('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='))
+    try { Assert-True (Test-LdImageFile -Path $good) 'a real PNG should pass' }
+    finally { Remove-Item -LiteralPath $good -ErrorAction SilentlyContinue }
+}
+
 # ---------------- summary ----------------
 Write-Host ''
 Write-Host "$script:Passed passed, $script:Failed failed"
