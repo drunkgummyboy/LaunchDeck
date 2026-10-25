@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LaunchDeck v2 mockup</title>
+<style>
+  :root { --text-secondary:#9a9a9a; }
+  body { background:#161616; color:#f3f3f3; font-family:"Segoe UI",system-ui,sans-serif; max-width:1100px; margin:0 auto; padding:24px 16px; }
+  .subtitle { color:#9a9a9a; }
+  .options { display:flex; flex-direction:column; gap:1rem; }
+  .option { display:flex; gap:12px; background:#1e1e1e; border:1px solid #333; border-radius:10px; padding:14px; }
+  .option .letter { background:#333; border-radius:6px; width:28px; height:28px; display:flex; align-items:center; justify-content:center; font-weight:700; flex-shrink:0; }
+  .option[data-choice="b-sidebar"] { border-color:#4cc2ff; }
+  .option .content { flex:1; min-width:0; }
+  .option .content p { color:#9a9a9a; margin:.2rem 0 .5rem; }
+</style></head><body>
+<p class="subtitle"><b>Chosen: layout B (sidebar).</b> Layout A is kept here for reference only.</p><style>
+  .ld-win { background:#202020; color:#f3f3f3; border:1px solid #3a3a3a; border-radius:10px; overflow:hidden; font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif; font-size:13px; box-shadow:0 10px 30px rgba(0,0,0,.35); margin-top:.5rem; }
+  .ld-title { display:flex; align-items:center; gap:8px; padding:7px 12px; background:#1b1b1b; font-size:12px; color:#cfcfcf; }
+  .ld-title img { width:16px; height:16px; }
+  .ld-title .ctrl { margin-left:auto; color:#8a8a8a; letter-spacing:16px; }
+  .ld-top { display:flex; gap:8px; align-items:center; padding:12px 16px 4px; flex-wrap:wrap; }
+  .ld-search { flex:1; min-width:170px; background:#2b2b2b; border:1px solid #3d3d3d; border-bottom:2px solid #4cc2ff; border-radius:6px; padding:6px 10px; color:#9a9a9a; }
+  .ld-lbl { color:#9a9a9a; font-size:12px; }
+  .ld-chip { background:#2d2d2d; border:1px solid #3d3d3d; border-radius:999px; padding:4px 11px; font-size:12px; white-space:nowrap; }
+  .ld-chip.on { background:#4cc2ff; color:#00273a; border-color:#4cc2ff; font-weight:600; }
+  .ld-sub { display:flex; align-items:center; gap:8px; padding:6px 16px 0; font-size:12px; color:#bdbdbd; flex-wrap:wrap; }
+  .ld-sub .sp { margin-left:auto; display:flex; gap:6px; }
+  .ld-btn { background:#2d2d2d; border:1px solid #3d3d3d; border-radius:6px; padding:5px 12px; font-size:12px; color:#f3f3f3; white-space:nowrap; }
+  .ld-btn.primary { background:#4cc2ff; color:#00273a; border-color:#4cc2ff; font-weight:600; padding:7px 16px; }
+  .ld-btn.small { padding:2px 9px; font-size:11px; }
+  .ld-body { display:flex; min-height:330px; }
+  .ld-main { flex:1; padding:2px 16px 12px; min-width:0; }
+  .ld-cat { font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:#9a9a9a; margin:12px 0 6px; }
+  .ld-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(98px,1fr)); gap:8px; }
+  .ld-card { position:relative; background:#2b2b2b; border:1px solid #3a3a3a; border-radius:8px; padding:10px 4px 8px; text-align:center; font-size:12px; line-height:1.25; }
+  .ld-card img { width:28px; height:28px; display:block; margin:2px auto 6px; border-radius:6px; }
+  .ld-card.sel { border-color:#4cc2ff; background:#1d3442; }
+  .ld-card.sel::after { content:"\2713"; position:absolute; top:4px; right:7px; font-size:11px; color:#4cc2ff; font-weight:700; }
+  .ld-card.inst { opacity:.6; }
+  .ld-badge { display:inline-block; margin-top:4px; font-size:10px; padding:1px 7px; border-radius:999px; background:#2c4a2c; color:#a6e3a6; }
+  .ld-tools { width:215px; background:#1c1c1c; border-left:1px solid #333; padding:12px; flex-shrink:0; }
+  .ld-tool { display:flex; gap:9px; align-items:flex-start; padding:8px; border-radius:6px; background:#262626; border:1px solid #333; margin-bottom:6px; font-size:12px; }
+  .ld-tool .ic { width:20px; height:20px; flex-shrink:0; border-radius:4px; display:flex; align-items:center; justify-content:center; font-size:13px; }
+  .ld-tool img.ic { object-fit:contain; }
+  .ld-tool small { display:block; color:#9a9a9a; font-size:11px; line-height:1.3; margin-top:1px; }
+  .ld-foot { display:flex; align-items:center; gap:10px; padding:10px 16px; border-top:1px solid #333; background:#1c1c1c; font-size:12px; color:#bdbdbd; flex-wrap:wrap; }
+  .ld-foot .sp { margin-left:auto; display:flex; gap:8px; }
+  .ld-good { color:#6ccb5f; }
+  .ld-side { width:150px; padding:10px 8px; border-right:1px solid #333; background:#1c1c1c; flex-shrink:0; }
+  .ld-nav { display:flex; justify-content:space-between; padding:7px 10px; border-radius:6px; font-size:12px; color:#d6d6d6; margin-bottom:2px; }
+  .ld-nav span { color:#8a8a8a; }
+  .ld-nav.on { background:#2d2d2d; box-shadow:inset 3px 0 0 #4cc2ff; color:#fff; }
+  .ld-row { display:flex; align-items:center; gap:10px; padding:8px 4px; border-bottom:1px solid #2e2e2e; font-size:12px; }
+  .ld-row img { width:20px; height:20px; border-radius:4px; }
+  .ld-row .nm { width:130px; }
+  .ld-row .st { flex:1; color:#bdbdbd; }
+  .ld-bar { height:6px; border-radius:3px; background:#3a3a3a; overflow:hidden; }
+  .ld-bar i { display:block; height:100%; background:#4cc2ff; }
+  .ld-bad { color:#ff8a80; }
+  .ld-note { font-size:.85rem; color:var(--text-secondary); margin:.4rem 0 0; }
+  .ld-wrap { overflow-x:auto; }
+</style>
+
+<h2>The new LaunchDeck window</h2>
+<p class="subtitle">Two ways to lay out the apps. Click the one that feels right, then tell me what to change in the chat.</p>
+
+<div class="options">
+
+  <div class="option" data-choice="a-sections" >
+    <div class="letter">A</div>
+    <div class="content">
+      <h3>Sections: all apps in one scrolling list, grouped under headings</h3>
+      <p>You can see everything at once. The search box filters the list as you type.</p>
+      <div class="ld-wrap"><div class="ld-win">
+        <div class="ld-title"><img src="https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/main/scripts/assets/LaunchDeck.ico" alt="">LaunchDeck<span class="ctrl">&#8211; &#9633; &#10005;</span></div>
+        <div class="ld-top">
+          <div class="ld-search">&#128269;&nbsp; Search apps&hellip;</div>
+          <span class="ld-lbl">Presets:</span>
+          <span class="ld-chip on">My PC</span><span class="ld-chip">Family laptop</span><span class="ld-chip">Everything</span><span class="ld-chip">None</span>
+        </div>
+        <div class="ld-sub">
+          <span><b>15</b> of 21 selected &middot; <span class="ld-good">3 already installed</span></span>
+          <span class="sp"><span class="ld-btn small">Select all</span><span class="ld-btn small">Select none</span></span>
+        </div>
+        <div class="ld-body">
+          <div class="ld-main">
+            <div class="ld-cat">Essentials</div>
+            <div class="ld-grid">
+              <div class="ld-card inst"><img src="https://www.google.com/s2/favicons?domain=firefox.com&sz=64" alt="">Firefox<br><span class="ld-badge">Installed</span></div>
+              <div class="ld-card inst"><img src="https://www.google.com/s2/favicons?domain=7-zip.org&sz=64" alt="">7-Zip<br><span class="ld-badge">Installed</span></div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=learn.microsoft.com&sz=64" alt="">PowerToys</div>
+              <div class="ld-card inst"><img src="https://www.google.com/s2/favicons?domain=drive.google.com&sz=64" alt="">Google Drive<br><span class="ld-badge">Installed</span></div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=microsoft.com&sz=64" alt="">Windows Terminal</div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=microsoft.com&sz=64" alt="">PowerShell 7</div>
+            </div>
+            <div class="ld-cat">Media</div>
+            <div class="ld-grid">
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=videolan.org&sz=64" alt="">VLC</div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=spotify.com&sz=64" alt="">Spotify</div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=getpaint.net&sz=64" alt="">Paint.NET</div>
+              <div class="ld-card"><img src="https://www.google.com/s2/favicons?domain=filebot.net&sz=64" alt="">FileBot</div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=file-converter.io&sz=64" alt="">File Converter</div>
+            </div>
+            <div class="ld-cat">Chat &middot; 3D printing &middot; Developer &middot; Documents &nbsp;<span style="text-transform:none;letter-spacing:0">(scroll for more)</span></div>
+            <div class="ld-grid">
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=discord.com&sz=64" alt="">Discord</div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=whatsapp.com&sz=64" alt="">WhatsApp</div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=bambulab.com&sz=64" alt="">Bambu Studio</div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=f3d.app&sz=64" alt="">F3D</div>
+              <div class="ld-card"><img src="https://www.google.com/s2/favicons?domain=nodejs.org&sz=64" alt="">Node.js</div>
+            </div>
+          </div>
+          <div class="ld-tools">
+            <div class="ld-cat" style="margin-top:0">Tools from GitHub</div>
+            <div class="ld-tool"><img class="ic" src="https://www.google.com/s2/favicons?domain=christitus.com&sz=64" alt=""><div>WinUtil<small>Chris Titus Windows utility</small></div></div>
+            <div class="ld-tool"><img class="ic" src="https://www.google.com/s2/favicons?domain=office.com&sz=64" alt=""><div>Office<small>Remove, download or activate Office</small></div></div>
+            <div class="ld-tool"><span class="ic" style="background:#3a3a3a">&#127991;</span><div>Set PC name<small>Rename the PC and its boot entry</small></div></div>
+            <div class="ld-tool"><span class="ic" style="background:#3a3a3a">&#128279;</span><div>Shortcuts<small>Desktop shortcuts for torrents</small></div></div>
+            <div class="ld-tool"><span class="ic" style="background:#3a3a3a">&#11014;</span><div>Upgrade all<small>Update every installed app</small></div></div>
+          </div>
+        </div>
+        <div class="ld-foot">
+          <span class="ld-btn">&#128421; Add to desktop</span><span class="ld-good">&#9679;</span> Winget ready
+          <span class="sp"><span class="ld-btn">Close</span><span class="ld-btn primary">Install 15 apps</span></span>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+  <div class="option" data-choice="b-sidebar" >
+    <div class="letter">B</div>
+    <div class="content">
+      <h3>Sidebar: the categories are a menu on the left, and you see one group at a time</h3>
+      <p>Tidier when the list gets long. Click "All" to see everything.</p>
+      <div class="ld-wrap"><div class="ld-win">
+        <div class="ld-title"><img src="https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/main/scripts/assets/LaunchDeck.ico" alt="">LaunchDeck<span class="ctrl">&#8211; &#9633; &#10005;</span></div>
+        <div class="ld-top">
+          <div class="ld-search">&#128269;&nbsp; Search apps&hellip;</div>
+          <span class="ld-lbl">Presets:</span>
+          <span class="ld-chip on">My PC</span><span class="ld-chip">Family laptop</span><span class="ld-chip">Everything</span><span class="ld-chip">None</span>
+        </div>
+        <div class="ld-body" style="margin-top:8px;border-top:1px solid #333">
+          <div class="ld-side">
+            <div class="ld-nav">All <span>21</span></div>
+            <div class="ld-nav on">Essentials <span>6</span></div>
+            <div class="ld-nav">Media <span>5</span></div>
+            <div class="ld-nav">Chat <span>2</span></div>
+            <div class="ld-nav">3D printing <span>3</span></div>
+            <div class="ld-nav">Developer <span>3</span></div>
+            <div class="ld-nav">Documents <span>1</span></div>
+          </div>
+          <div class="ld-main">
+            <div class="ld-sub" style="padding:10px 0 0">
+              <span><b>15</b> of 21 selected &middot; <span class="ld-good">3 already installed</span></span>
+              <span class="sp"><span class="ld-btn small">Select all</span><span class="ld-btn small">Select none</span></span>
+            </div>
+            <div class="ld-cat">Essentials</div>
+            <div class="ld-grid">
+              <div class="ld-card inst"><img src="https://www.google.com/s2/favicons?domain=firefox.com&sz=64" alt="">Firefox<br><span class="ld-badge">Installed</span></div>
+              <div class="ld-card inst"><img src="https://www.google.com/s2/favicons?domain=7-zip.org&sz=64" alt="">7-Zip<br><span class="ld-badge">Installed</span></div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=learn.microsoft.com&sz=64" alt="">PowerToys</div>
+              <div class="ld-card inst"><img src="https://www.google.com/s2/favicons?domain=drive.google.com&sz=64" alt="">Google Drive<br><span class="ld-badge">Installed</span></div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=microsoft.com&sz=64" alt="">Windows Terminal</div>
+              <div class="ld-card sel"><img src="https://www.google.com/s2/favicons?domain=microsoft.com&sz=64" alt="">PowerShell 7</div>
+            </div>
+          </div>
+          <div class="ld-tools">
+            <div class="ld-cat" style="margin-top:0">Tools from GitHub</div>
+            <div class="ld-tool"><img class="ic" src="https://www.google.com/s2/favicons?domain=christitus.com&sz=64" alt=""><div>WinUtil<small>Chris Titus Windows utility</small></div></div>
+            <div class="ld-tool"><img class="ic" src="https://www.google.com/s2/favicons?domain=office.com&sz=64" alt=""><div>Office<small>Remove, download or activate Office</small></div></div>
+            <div class="ld-tool"><span class="ic" style="background:#3a3a3a">&#127991;</span><div>Set PC name<small>Rename the PC and its boot entry</small></div></div>
+            <div class="ld-tool"><span class="ic" style="background:#3a3a3a">&#128279;</span><div>Shortcuts<small>Desktop shortcuts for torrents</small></div></div>
+            <div class="ld-tool"><span class="ic" style="background:#3a3a3a">&#11014;</span><div>Upgrade all<small>Update every installed app</small></div></div>
+          </div>
+        </div>
+        <div class="ld-foot">
+          <span class="ld-btn">&#128421; Add to desktop</span><span class="ld-good">&#9679;</span> Winget ready
+          <span class="sp"><span class="ld-btn">Close</span><span class="ld-btn primary">Install 15 apps</span></span>
+        </div>
+      </div></div>
+    </div>
+  </div>
+
+</div>
+
+<h3 style="margin-top:2rem">While installing (the same for A and B)</h3>
+<p class="ld-note">The window stays responsive. Each app shows its own status. If something fails, you can retry just that one.</p>
+<div class="ld-wrap" style="max-width:640px"><div class="ld-win">
+  <div class="ld-title"><img src="https://raw.githubusercontent.com/drunkgummyboy/LaunchDeck/main/scripts/assets/LaunchDeck.ico" alt="">LaunchDeck &mdash; Installing<span class="ctrl">&#8211; &#9633; &#10005;</span></div>
+  <div style="padding:14px 16px 6px">
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:#bdbdbd;margin-bottom:6px"><span>Installing 6 of 15</span><span>about 4 min left</span></div>
+    <div class="ld-bar" style="height:8px"><i style="width:38%"></i></div>
+  </div>
+  <div style="padding:4px 16px 10px">
+    <div class="ld-row"><img src="https://www.google.com/s2/favicons?domain=learn.microsoft.com&sz=64" alt=""><span class="nm">PowerToys</span><span class="st ld-good">&#10003; Installed</span></div>
+    <div class="ld-row"><img src="https://www.google.com/s2/favicons?domain=microsoft.com&sz=64" alt=""><span class="nm">Windows Terminal</span><span class="st ld-good">&#10003; Installed</span></div>
+    <div class="ld-row"><img src="https://www.google.com/s2/favicons?domain=videolan.org&sz=64" alt=""><span class="nm">VLC</span><span class="st ld-bad">&#10007; Failed: download timed out</span><span class="ld-btn small">Retry</span></div>
+    <div class="ld-row"><img src="https://www.google.com/s2/favicons?domain=spotify.com&sz=64" alt=""><span class="nm">Spotify</span><span class="st ld-good">&#10003; Installed</span></div>
+    <div class="ld-row"><img src="https://www.google.com/s2/favicons?domain=getpaint.net&sz=64" alt=""><span class="nm">Paint.NET</span><span class="st ld-good">&#10003; Installed</span></div>
+    <div class="ld-row"><img src="https://www.google.com/s2/favicons?domain=file-converter.io&sz=64" alt=""><span class="nm">File Converter</span><span class="st" style="color:#4cc2ff">Installing&hellip;</span><span style="width:90px" class="ld-bar"><i style="width:60%"></i></span></div>
+    <div class="ld-row" style="opacity:.55"><img src="https://www.google.com/s2/favicons?domain=discord.com&sz=64" alt=""><span class="nm">Discord</span><span class="st">Waiting</span></div>
+    <div class="ld-row" style="opacity:.55;border-bottom:0"><img src="https://www.google.com/s2/favicons?domain=whatsapp.com&sz=64" alt=""><span class="nm">WhatsApp</span><span class="st">Waiting</span></div>
+  </div>
+  <div class="ld-foot">
+    <span>&#9662; Show details (winget output)</span>
+    <span class="sp"><span class="ld-btn">Open log</span><span class="ld-btn">Stop after this app</span></span>
+  </div>
+</div></div>
+
+<p class="ld-note" style="margin-top:1.2rem">The colours follow Windows: dark when Windows is set to dark, light otherwise. The categories and the "My PC" / "Family laptop" presets are my guesses, and you choose them in the app list. The names on these cards are your current apps.</p>
+
+</body></html>
