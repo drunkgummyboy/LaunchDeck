@@ -209,23 +209,48 @@ function New-LdSharedAcl {
     $acl
 }
 
+function Get-LdOwnerSid {
+    param([Parameter(Mandatory)][string]$Path)
+    try { (Get-Acl -LiteralPath $Path).GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { '' }
+}
+
+# Deletes a link itself (never its target) or a file/folder tree; Directory.Delete never follows junctions.
+function Remove-LdItem {
+    param([Parameter(Mandatory)]$Item)
+    $isLink = [bool]($Item.Attributes -band [IO.FileAttributes]::ReparsePoint)
+    if ($Item.PSIsContainer) { [IO.Directory]::Delete($Item.FullName, -not $isLink) }
+    else { [IO.File]::Delete($Item.FullName) }
+}
+
 # C:\ProgramData\LaunchDeck is written by the elevated app and read by every user, so only admins may
-# change it. A junction, or a folder some other account created first, is removed before use.
+# change it. A junction, or a folder some other account created first, is removed; the folder is then
+# created with its locked-down permissions in one step and checked again before anything is written.
+# -SkipAcl is for tests without admin rights: no owner checks, no permissions.
 function Initialize-LdSharedFolder {
     param([Parameter(Mandatory)][string]$Path, [switch]$SkipAcl)
+    $trusted = 'S-1-5-32-544', 'S-1-5-18'
     $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
-    if ($item) {
-        if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
-            [IO.Directory]::Delete($Path)   # removes the link only
-        } elseif (-not $item.PSIsContainer) {
-            Remove-Item -LiteralPath $Path -Force
-        } else {
-            $owner = try { (Get-Acl -LiteralPath $Path).GetOwner([Security.Principal.SecurityIdentifier]).Value } catch { '' }
-            if ($owner -notin 'S-1-5-32-544', 'S-1-5-18') { [IO.Directory]::Delete($Path, $true) }   # never follows junctions
+    if ($item -and (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -or -not $item.PSIsContainer -or
+                    (Get-LdOwnerSid -Path $Path) -notin $trusted)) {
+        Remove-LdItem -Item $item
+    }
+
+    $acl = New-LdSharedAcl
+    $acl.SetOwner((New-Object Security.Principal.SecurityIdentifier 'S-1-5-32-544'))
+    $dir = New-Object IO.DirectoryInfo $Path
+    if (-not $dir.Exists) { if ($SkipAcl) { $dir.Create() } else { $dir.Create($acl) } }
+
+    # Something may have been put there between the delete and the create: check before trusting it.
+    $item = Get-Item -LiteralPath $Path -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw "$Path was replaced by a link; not using it." }
+    if ($SkipAcl) { return }
+    if ((Get-LdOwnerSid -Path $Path) -notin $trusted) { throw "$Path is not owned by Administrators; not using it." }
+    foreach ($child in Get-ChildItem -LiteralPath $Path -Force) {
+        if (($child.Attributes -band [IO.FileAttributes]::ReparsePoint) -or (Get-LdOwnerSid -Path $child.FullName) -notin $trusted) {
+            Remove-LdItem -Item $child
         }
     }
-    if (-not (Test-Path -LiteralPath $Path)) { New-Item -ItemType Directory -Path $Path -Force | Out-Null }
-    if (-not $SkipAcl) { Set-Acl -LiteralPath $Path -AclObject (New-LdSharedAcl) }
+    Set-Acl -LiteralPath $Path -AclObject $acl
 }
 
 # Admin runs log to the locked-down ProgramData folder; practice runs (not admin) to %TEMP%.
