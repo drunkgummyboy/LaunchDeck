@@ -1,22 +1,37 @@
-[
-    { "Name": "PowerToys", "Id": "Microsoft.PowerToys", "Domain": "microsoft.com" },
-    { "Name": "7-Zip", "Id": "7zip.7zip", "Domain": "7-zip.org" },
-    { "Name": "Firefox", "Id": "Mozilla.Firefox", "Domain": "firefox.com" },
-    { "Name": "Google Drive", "Id": "Google.googleDrive", "Domain": "drive.google.com" },
-    { "Name": "VLC", "Id": "VideoLAN.VLC", "Domain": "videolan.org" },
-    { "Name": "Discord", "Id": "Discord.Discord", "Domain": "discord.com" },
-    { "Name": "Paint.NET", "Id": "dotPDN.paintdotnet", "Domain": "getpaint.net" },
-    { "Name": "FileBot", "Id": "PointPlanck.FileBot", "Domain": "filebot.net" },
-    { "Name": "F3D", "Id": "f3d-app.f3d", "Domain": "f3d.app" },
-    { "Name": "STL-Thumb", "Id": "UnlimitedBacon.STL-Thumb", "Domain": "winstall.app" },
-    { "Name": "Node.js", "Id": "OpenJS.NodeJS", "Domain": "nodejs.org" },
-    { "Name": "Python", "Id": "Python.Python.3.13", "Domain": "python.org" },
-    { "Name": "Spotify", "Id": "Spotify.Spotify", "Domain": "spotify.com" },
-    { "Name": "File Converter", "Id": "AdrienAllard.FileConverter", "Domain": "file-converter.io" },
-    { "Name": "Bambu Studio", "Id": "Bambulab.Bambustudio", "Domain": "bambulab.com" },
-    { "Name": "Windows Terminal", "Id": "Microsoft.WindowsTerminal", "Domain": "microsoft.com" },
-    { "Name": "Phoenix Code", "Id": "Core-ai.PhoenixCode", "Domain": "code.visualstudio.com" },
-    { "Name": "WhatsApp", "Id": "WhatsApp.WhatsApp", "Domain": "whatsapp.com" },
-    { "Name": "PowerShell", "Id": "Microsoft.PowerShell ", "Domain": "microsoft.com" },
-    { "Name": "StirlingPDF", "Id": "StirlingTools.StirlingPDF", "Domain": "stirling.com" }
-]
+{
+    "categories": ["Essentials", "Media", "Chat", "3D printing", "Developer", "Documents"],
+    "presets": [
+        { "name": "My PC", "apps": "*" },
+        { "name": "Family laptop", "apps": [
+            "Mozilla.Firefox", "7zip.7zip", "Google.GoogleDrive", "VideoLAN.VLC",
+            "Spotify.Spotify", "9NKSQGP7F2NH", "AdrienAllard.FileConverter", "StirlingTools.StirlingPDF"
+        ] }
+    ],
+    "apps": [
+        { "name": "Firefox",          "id": "Mozilla.Firefox",            "category": "Essentials",  "icon": "firefox.com" },
+        { "name": "7-Zip",            "id": "7zip.7zip",                  "category": "Essentials",  "icon": "7-zip.org" },
+        { "name": "PowerToys",        "id": "Microsoft.PowerToys",        "category": "Essentials",  "icon": "microsoft.com" },
+        { "name": "Google Drive",     "id": "Google.GoogleDrive",         "category": "Essentials",  "icon": "drive.google.com" },
+        { "name": "Windows Terminal", "id": "Microsoft.WindowsTerminal",  "category": "Essentials",  "icon": "microsoft.com" },
+        { "name": "PowerShell 7",     "id": "Microsoft.PowerShell",       "category": "Essentials",  "icon": "microsoft.com" },
+
+        { "name": "VLC",              "id": "VideoLAN.VLC",               "category": "Media",       "icon": "videolan.org" },
+        { "name": "Spotify",          "id": "Spotify.Spotify",            "category": "Media",       "icon": "spotify.com" },
+        { "name": "Paint.NET",        "id": "dotPDN.PaintDotNet",         "category": "Media",       "icon": "getpaint.net" },
+        { "name": "FileBot",          "id": "PointPlanck.FileBot",        "category": "Media",       "icon": "filebot.net" },
+        { "name": "File Converter",   "id": "AdrienAllard.FileConverter", "category": "Media",       "icon": "file-converter.io" },
+
+        { "name": "Discord",          "id": "Discord.Discord",            "category": "Chat",        "icon": "discord.com" },
+        { "name": "WhatsApp",         "id": "9NKSQGP7F2NH",               "category": "Chat",        "icon": "whatsapp.com", "source": "msstore" },
+
+        { "name": "Bambu Studio",     "id": "Bambulab.Bambustudio",       "category": "3D printing", "icon": "bambulab.com" },
+        { "name": "F3D",              "id": "f3d-app.f3d",                "category": "3D printing", "icon": "f3d.app" },
+        { "name": "STL-Thumb",        "id": "UnlimitedBacon.STL-Thumb",   "category": "3D printing", "icon": "github.com" },
+
+        { "name": "Node.js",          "id": "OpenJS.NodeJS",              "category": "Developer",   "icon": "nodejs.org" },
+        { "name": "Python",           "id": "Python.Python.3.13",         "category": "Developer",   "icon": "python.org" },
+        { "name": "Phoenix Code",     "id": "Core-ai.PhoenixCode",        "category": "Developer",   "icon": "phcode.dev" },
+
+        { "name": "Stirling PDF",     "id": "StirlingTools.StirlingPDF",  "category": "Documents",   "icon": "stirlingpdf.com" }
+    ]
+}

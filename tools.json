@@ -1,0 +1,7 @@
+[
+    { "file": "WinUtill.ps1",    "name": "WinUtil",     "description": "Adds a Chris Titus WinUtil shortcut to the desktop",       "icon": "assets/CTTtools.ico" },
+    { "file": "Office.ps1",      "name": "Office",      "description": "Remove, download or activate Office",                      "icon": "office.com" },
+    { "file": "SetName.ps1",     "name": "Set PC name", "description": "Rename the PC and its boot menu entry" },
+    { "file": "Shortcuts.ps1",   "name": "Shortcuts",   "description": "Desktop shortcuts for torrents, Downloads and AirGrabber", "icon": "assets/MoveTorrentFiles.ico" },
+    { "file": "upgrade all.ps1", "name": "Upgrade all", "description": "Update every installed app with winget" }
+]
