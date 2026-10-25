@@ -252,10 +252,10 @@ function Get-LdText {
 }
 
 function Save-LdFile {
-    param([Parameter(Mandatory)][string]$Url, [Parameter(Mandatory)][string]$Path)
+    param([Parameter(Mandatory)][string]$Url, [Parameter(Mandatory)][string]$Path, [int]$TimeoutSec = 10)
     $ProgressPreference = 'SilentlyContinue'
     try {
-        Invoke-WebRequest -Uri $Url -OutFile $Path -UseBasicParsing -TimeoutSec 10 -Headers @{ 'User-Agent' = 'LaunchDeck' }
+        Invoke-WebRequest -Uri $Url -OutFile $Path -UseBasicParsing -TimeoutSec $TimeoutSec -Headers @{ 'User-Agent' = 'LaunchDeck' }
         $true
     } catch {
         Remove-Item -LiteralPath $Path -ErrorAction SilentlyContinue
@@ -375,6 +375,139 @@ function Get-LdWingetState {
         Remove-Item -LiteralPath $tmp -ErrorAction SilentlyContinue
     }
     $state
+}
+
+# ============================================================================
+#  Install engine (runs in a worker; reports through events)
+# ============================================================================
+
+# winget progress bars and spinners only clutter the details panel and the log.
+function Test-LdNoiseLine {
+    param([AllowEmptyString()][string]$Line)
+    $text = "$Line".Trim()
+    if (-not $text) { return $true }
+    if ($text -match '^[-\\|/]$') { return $true }
+    if ($text -match '^\d+%$') { return $true }
+    if ($text.IndexOf([char]0x2588) -ge 0 -or $text.IndexOf([char]0x2592) -ge 0) { return $true }
+    $false
+}
+
+function Update-LdPath {
+    $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' + [Environment]::GetEnvironmentVariable('Path', 'User')
+}
+
+# Fresh PCs often have App Installer but not yet registered; otherwise install it from Microsoft's GitHub release.
+function Install-LdWinget {
+    Write-LdLog 'winget not found - trying to register App Installer'
+    try { Add-AppxPackage -RegisterByFamilyName -MainPackage 'Microsoft.DesktopAppInstaller_8wekyb3d8bbwe' -ErrorAction Stop }
+    catch { Write-LdLog "Registering App Installer failed: $($_.Exception.Message)" }
+    Update-LdPath
+    if (Get-Command winget.exe -ErrorAction SilentlyContinue) { return $true }
+
+    try {
+        Write-LdLog 'Downloading winget from github.com/microsoft/winget-cli'
+        $release = ConvertFrom-Json -InputObject (Get-LdText -Url 'https://api.github.com/repos/microsoft/winget-cli/releases/latest')
+        $bundle = $release.assets | Where-Object { $_.name -like '*.msixbundle' } | Select-Object -First 1
+        $deps = $release.assets | Where-Object { $_.name -eq 'DesktopAppInstaller_Dependencies.zip' } | Select-Object -First 1
+        $dir = Get-LdDataDir -Child 'winget-setup'
+        if ($deps) {
+            $zip = Join-Path $dir $deps.name
+            if (Save-LdFile -Url $deps.browser_download_url -Path $zip -TimeoutSec 60) {
+                $unpacked = Join-Path $dir 'deps'
+                Expand-Archive -LiteralPath $zip -DestinationPath $unpacked -Force
+                $arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'arm64' } else { 'x64' }
+                foreach ($appx in Get-ChildItem -LiteralPath $unpacked -Recurse -Filter '*.appx' | Where-Object { $_.FullName -match "\\$arch\\" }) {
+                    try { Add-AppxPackage -Path $appx.FullName -ErrorAction Stop } catch { Write-LdLog "Dependency $($appx.Name): $($_.Exception.Message)" }
+                }
+            }
+        }
+        $bundlePath = Join-Path $dir $bundle.name
+        if (-not (Save-LdFile -Url $bundle.browser_download_url -Path $bundlePath -TimeoutSec 60)) { throw 'download failed' }
+        Add-AppxPackage -Path $bundlePath -ErrorAction Stop
+    } catch {
+        Write-LdLog "Installing winget failed: $($_.Exception.Message)"
+    }
+    Update-LdPath
+    [bool](Get-Command winget.exe -ErrorAction SilentlyContinue)
+}
+
+function Invoke-LdWingetInstall {
+    param([Parameter(Mandatory)]$App)
+    $arguments = @('install', '--id', $App.Id, '--exact', '--silent', '--accept-package-agreements', '--accept-source-agreements', '--disable-interactivity')
+    if ($App.Source) { $arguments += @('--source', $App.Source) }
+    $psi = New-Object Diagnostics.ProcessStartInfo
+    $psi.FileName = (Get-Command winget.exe -ErrorAction Stop).Source
+    $psi.Arguments = ($arguments | ForEach-Object { if ($_ -match '\s') { '"' + $_ + '"' } else { $_ } }) -join ' '
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.StandardOutputEncoding = [Text.Encoding]::UTF8
+    $psi.StandardErrorEncoding = [Text.Encoding]::UTF8
+    $process = [Diagnostics.Process]::Start($psi)
+    $stderr = $process.StandardError.ReadToEndAsync()
+    $lastLine = ''
+    while ($null -ne ($line = $process.StandardOutput.ReadLine())) {
+        if (Test-LdNoiseLine -Line $line) { continue }
+        $lastLine = $line.Trim()
+        Write-LdLog "  [$($App.Id)] $lastLine"
+        Send-LdEvent -Type 'AppOutput' -Data @{ Id = $App.Id; Line = $lastLine }
+    }
+    $process.WaitForExit()
+    if ($stderr.Result.Trim()) { Write-LdLog "  [$($App.Id)] stderr: $($stderr.Result.Trim())" }
+    Write-LdLog "  [$($App.Id)] exit code $($process.ExitCode)"
+    $result = Get-LdInstallResult -ExitCode $process.ExitCode
+    if ($result.Status -eq 'Failed' -and $result.Note -like 'winget error*' -and $lastLine) { $result.Note = "$lastLine ($($result.Note))" }
+    $result
+}
+
+# Practice mode: no winget, short pauses, and the third app overall fails once so Retry can be tried.
+function Invoke-LdPracticeInstall {
+    param([Parameter(Mandatory)]$App, [int]$DelayMs = -1)
+    Send-LdEvent -Type 'AppOutput' -Data @{ Id = $App.Id; Line = "Practice mode: pretending to install $($App.Name)" }
+    Start-Sleep -Milliseconds $(if ($DelayMs -ge 0) { $DelayMs } else { Get-Random -Minimum 1000 -Maximum 3000 })
+    $LdSync.PracticeCount = [int]$LdSync.PracticeCount + 1
+    if ($LdSync.PracticeCount -eq 3) { return @{ Status = 'Failed'; Note = 'Simulated failure' } }
+    @{ Status = 'Installed'; Note = '' }
+}
+
+# Works through $LdSync.Pending until it is empty or "stop after this app" was pressed.
+function Invoke-LdInstallQueue {
+    param([bool]$Practice, [int]$PracticeDelayMs = -1)
+    $stopped = $false
+    $app = $null
+    try {
+        if (-not $Practice -and -not (Get-Command winget.exe -ErrorAction SilentlyContinue)) {
+            Send-LdEvent -Type 'WingetSetup' -Data @{ Status = 'Installing' }
+            $ok = Install-LdWinget
+            Send-LdEvent -Type 'WingetSetup' -Data @{ Status = $(if ($ok) { 'Installed' } else { 'Failed' }) }
+            if (-not $ok) {
+                while ($LdSync.Pending.TryDequeue([ref]$app)) {
+                    Send-LdEvent -Type 'AppStatus' -Data @{ Id = $app.Id; Status = 'Failed'; Note = 'winget could not be installed' }
+                }
+                return
+            }
+        }
+        while ($LdSync.Pending.TryDequeue([ref]$app)) {
+            Send-LdEvent -Type 'AppStatus' -Data @{ Id = $app.Id; Status = 'Installing'; Note = '' }
+            Write-LdLog "Installing $($app.Name) ($($app.Id))"
+            $result = if ($Practice) { Invoke-LdPracticeInstall -App $app -DelayMs $PracticeDelayMs } else { Invoke-LdWingetInstall -App $app }
+            Write-LdLog "$($app.Name): $($result.Status) $($result.Note)"
+            Send-LdEvent -Type 'AppStatus' -Data @{ Id = $app.Id; Status = $result.Status; Note = $result.Note }
+            $app = $null
+            if ($LdSync.StopAfterCurrent) { $stopped = $true; break }
+        }
+    } catch {
+        Write-LdLog "Install engine error: $($_.Exception.Message)"
+        if ($app) { Send-LdEvent -Type 'AppStatus' -Data @{ Id = $app.Id; Status = 'Failed'; Note = $_.Exception.Message } }
+    } finally {
+        Send-LdEvent -Type 'EngineDone' -Data @{ Stopped = $stopped }
+    }
+}
+
+$script:LdInstallWorker = {
+    param($Practice)
+    Invoke-LdInstallQueue -Practice $Practice
 }
 
 $script:LdLoadWorker = {
@@ -538,6 +671,13 @@ function Get-LdXaml {
           </ControlTemplate>
         </Setter.Value>
       </Setter>
+    </Style>
+
+    <Style TargetType="ProgressBar">
+      <Setter Property="Foreground" Value="{StaticResource Accent}"/>
+      <Setter Property="Background" Value="{StaticResource Line}"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Height" Value="6"/>
     </Style>
 
     <Style x:Key="Btn" TargetType="Button">
@@ -738,6 +878,44 @@ function Get-LdXaml {
         </DockPanel>
       </Border>
     </Grid>
+
+    <Grid x:Name="InstallView" Visibility="Collapsed">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+      <StackPanel Grid.Row="0" Margin="24,20,24,12">
+        <TextBlock x:Name="ProgressText" Text="Getting ready..." FontSize="16" FontWeight="SemiBold"/>
+        <ProgressBar x:Name="ProgressBar" Margin="0,10,0,0" Minimum="0" Maximum="1"/>
+      </StackPanel>
+      <Border x:Name="SummaryBox" Grid.Row="1" Visibility="Collapsed" Margin="24,0,24,12" Padding="14,10" CornerRadius="8"
+              Background="{StaticResource Surface}" BorderBrush="{StaticResource Line}" BorderThickness="1">
+        <TextBlock x:Name="SummaryText" TextWrapping="Wrap" LineHeight="21"/>
+      </Border>
+      <ScrollViewer Grid.Row="2" Margin="24,0,18,0" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel x:Name="RowHost" Margin="0,0,6,0"/>
+      </ScrollViewer>
+      <TextBox x:Name="DetailsBox" Grid.Row="3" Visibility="Collapsed" Height="160" Margin="24,8,24,10" IsReadOnly="True"
+               FontFamily="Consolas" FontSize="11.5" Background="{StaticResource Input}" Foreground="{StaticResource SubText}"
+               BorderBrush="{StaticResource Line}" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto"/>
+      <Border Grid.Row="4" Background="{StaticResource Panel}" BorderBrush="{StaticResource Line}" BorderThickness="0,1,0,0" Padding="16,10">
+        <DockPanel>
+          <StackPanel DockPanel.Dock="Left" Orientation="Horizontal">
+            <Button x:Name="DetailsButton" Content="Show details" Style="{StaticResource Btn}" Margin="0,0,8,0"/>
+            <Button x:Name="OpenLogButton" Content="Open log" Style="{StaticResource Btn}"/>
+          </StackPanel>
+          <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+            <Button x:Name="StopButton" Content="Stop after this app" Style="{StaticResource Btn}"/>
+            <Button x:Name="BackButton" Content="Back to list" Style="{StaticResource Btn}" Margin="0,0,8,0" Visibility="Collapsed"/>
+            <Button x:Name="DoneButton" Content="Close" Style="{StaticResource AccentBtn}" Visibility="Collapsed"/>
+          </StackPanel>
+          <Border/>
+        </DockPanel>
+      </Border>
+    </Grid>
   </Grid>
 </Window>
 '@
@@ -770,6 +948,10 @@ function New-LdIconSlot {
     [Windows.Media.RenderOptions]::SetBitmapScalingMode($image, 'HighQuality')
     [void]$grid.Children.Add($placeholder)
     [void]$grid.Children.Add($image)
+    if ($Icon -and $script:Ui.IconBitmaps.ContainsKey($Icon)) {
+        $image.Source = $script:Ui.IconBitmaps[$Icon]
+        $placeholder.Visibility = 'Collapsed'
+    }
     if ($Icon) {
         if (-not $script:Ui.IconTargets.ContainsKey($Icon)) { $script:Ui.IconTargets[$Icon] = New-Object Collections.ArrayList }
         [void]$script:Ui.IconTargets[$Icon].Add(@{ Image = $image; Placeholder = $placeholder })
@@ -940,6 +1122,7 @@ function Set-LdIcon {
     param($Data)
     $ui = $script:Ui
     $bitmap = New-LdBitmap -Path $Data.Path
+    $ui.IconBitmaps[$Data.Icon] = $bitmap
     if ($Data.Icon -eq 'assets/LaunchDeck.ico') { $ui.Window.Icon = $bitmap }
     if ($ui.IconTargets.ContainsKey($Data.Icon)) {
         foreach ($target in $ui.IconTargets[$Data.Icon]) {
@@ -1047,18 +1230,198 @@ function Update-LdSearch {
     Update-LdView
 }
 
+# ---- Install view -----------------------------------------------------------
+
+function New-LdInstallRow {
+    param([Parameter(Mandatory)]$App, [switch]$NoRetry)
+    $border = New-Object Windows.Controls.Border
+    $border.BorderBrush = Get-LdBrush 'Line'
+    $border.BorderThickness = New-Object Windows.Thickness(0, 0, 0, 1)
+    $border.Padding = New-Object Windows.Thickness(4, 9, 4, 9)
+    $border.Opacity = 0.6
+    $dock = New-Object Windows.Controls.DockPanel
+    $slot = New-LdIconSlot -Icon $App.Icon -Letter $App.Name.Substring(0, 1).ToUpper() -Size 20
+    $slot.Margin = New-Object Windows.Thickness(0, 0, 12, 0)
+    [void]$dock.Children.Add($slot)
+    $name = New-LdText -Text $App.Name
+    $name.Width = 190
+    $name.VerticalAlignment = 'Center'
+    $name.TextTrimming = 'CharacterEllipsis'
+    [void]$dock.Children.Add($name)
+    $retry = New-Object Windows.Controls.Button
+    $retry.Style = $script:Ui.Window.Resources['SmallBtn']
+    $retry.Content = 'Retry'
+    $retry.Tag = $App
+    $retry.Visibility = 'Collapsed'
+    $retry.Margin = New-Object Windows.Thickness(10, 0, 0, 0)
+    $retry.Add_Click({ param($sender, $e) Restart-LdApp -App $sender.Tag })
+    [Windows.Controls.DockPanel]::SetDock($retry, 'Right')
+    [void]$dock.Children.Add($retry)
+    $bar = New-Object Windows.Controls.ProgressBar
+    $bar.Width = 90
+    $bar.Height = 4
+    $bar.IsIndeterminate = $true
+    $bar.Visibility = 'Collapsed'
+    $bar.Margin = New-Object Windows.Thickness(10, 0, 0, 0)
+    [Windows.Controls.DockPanel]::SetDock($bar, 'Right')
+    [void]$dock.Children.Add($bar)
+    $status = New-LdText -Text 'Waiting' -Brush 'SubText'
+    $status.VerticalAlignment = 'Center'
+    $status.TextTrimming = 'CharacterEllipsis'
+    [void]$dock.Children.Add($status)
+    $border.Child = $dock
+    [void]$script:Ui.RowHost.Children.Add($border)
+    @{ CanRetry = -not $NoRetry; Row = $border; Status = $status; Bar = $bar; Retry = $retry }
+}
+
+function Set-LdRowStatus {
+    param([Parameter(Mandatory)][string]$Id, [Parameter(Mandatory)][string]$Status, [string]$Note = '')
+    $ui = $script:Ui
+    $row = $ui.Rows[$Id]
+    if (-not $row) { return }
+    $text, $brush = switch ($Status) {
+        'Waiting'          { 'Waiting', 'SubText' }
+        'Installing'       { 'Installing...', 'Accent' }
+        'Installed'        { "$([char]0x2713) Installed", 'Good' }
+        'AlreadyInstalled' { "$([char]0x2713) Already installed", 'Good' }
+        'Failed'           { "$([char]0x2717) Failed", 'Bad' }
+        default            { $Status, 'SubText' }
+    }
+    if ($Note) { $text = "$text - $Note" }
+    $row.Status.Text = $text
+    $row.Status.ToolTip = $text
+    $row.Status.Foreground = Get-LdBrush $brush
+    $row.Bar.Visibility = if ($Status -eq 'Installing') { 'Visible' } else { 'Collapsed' }
+    $row.Retry.Visibility = if ($Status -eq 'Failed' -and $row.CanRetry) { 'Visible' } else { 'Collapsed' }
+    $row.Row.Opacity = if ($Status -in 'Waiting', 'Skipped') { 0.6 } else { 1.0 }
+    if ($ui.Results.ContainsKey($Id)) { $ui.Results[$Id].Status = $Status }
+    Update-LdProgress
+}
+
+function Update-LdProgress {
+    $ui = $script:Ui
+    $all = @($ui.Results.Values)
+    $done = @($all | Where-Object { $_.Status -in 'Installed', 'AlreadyInstalled', 'Failed', 'Skipped' }).Count
+    $ui.ProgressBar.Maximum = [Math]::Max(1, $all.Count)
+    $ui.ProgressBar.Value = $done
+    if (-not $ui.Installing) { return }
+    $ui.ProgressText.Text = if ($ui.CloseWhenDone) { 'Closing after this app...' }
+        elseif ($LdSync.StopAfterCurrent) { 'Stopping after this app...' }
+        else { "Installing $([Math]::Min($all.Count, $done + 1)) of $($all.Count)" }
+}
+
+function Add-LdDetail {
+    param([string]$Id, [string]$Line)
+    $box = $script:Ui.DetailsBox
+    $name = if ($script:Ui.Results.ContainsKey($Id)) { $script:Ui.Results[$Id].Name } else { $Id }
+    $box.AppendText("[$name] $Line`r`n")
+    if ($box.Text.Length -gt 200000) { $box.Text = $box.Text.Substring($box.Text.Length - 150000) }
+    $box.ScrollToEnd()
+}
+
+function Start-LdEngine {
+    $ui = $script:Ui
+    $ui.Installing = $true
+    $ui.StopButton.Visibility = 'Visible'
+    $ui.StopButton.IsEnabled = $true
+    $ui.BackButton.Visibility = 'Collapsed'
+    $ui.DoneButton.Visibility = 'Collapsed'
+    Update-LdProgress
+    Start-LdWorker -ScriptBlock $script:LdInstallWorker -ArgumentList @($ui.Practice)
+}
+
+function Start-LdInstall {
+    $ui = $script:Ui
+    $apps = @(Get-LdSelectedApps)
+    if ($apps.Count -eq 0) { return }
+    Write-LdLog "Install started for $($apps.Count) apps (practice: $($ui.Practice))"
+    $ui.RowHost.Children.Clear()
+    $ui.Rows = @{}
+    $ui.Results = @{}
+    $ui.DetailsBox.Clear()
+    $ui.SummaryBox.Visibility = 'Collapsed'
+    $ui.CloseWhenDone = $false
+    if (-not $ui.Practice -and -not $ui.Winget.Present) {
+        $ui.Rows['winget-setup'] = New-LdInstallRow -App ([pscustomobject]@{ Name = 'Setting up winget'; Icon = 'microsoft.com' }) -NoRetry
+    }
+    foreach ($app in $apps) {
+        $ui.Rows[$app.Id] = New-LdInstallRow -App $app
+        $ui.Results[$app.Id] = @{ Name = $app.Name; Status = 'Waiting' }
+    }
+    $LdSync.StopAfterCurrent = $false
+    foreach ($app in $apps) { $LdSync.Pending.Enqueue($app) }
+    $ui.MainView.Visibility = 'Collapsed'
+    $ui.InstallView.Visibility = 'Visible'
+    Start-LdEngine
+}
+
+function Restart-LdApp {
+    param([Parameter(Mandatory)]$App)
+    Write-LdLog "Retry requested for $($App.Name)"
+    Set-LdRowStatus -Id $App.Id -Status 'Waiting'
+    $LdSync.Pending.Enqueue($App)
+    if (-not $script:Ui.Installing) {
+        $LdSync.StopAfterCurrent = $false
+        Start-LdEngine
+    }
+}
+
+function Complete-LdInstall {
+    param($Data)
+    $ui = $script:Ui
+    # A Retry clicked while the engine was finishing: keep going.
+    if (-not $Data.Stopped -and $LdSync.Pending.Count -gt 0) { Start-LdEngine; return }
+    $app = $null
+    while ($LdSync.Pending.TryDequeue([ref]$app)) { Set-LdRowStatus -Id $app.Id -Status 'Skipped' }
+    $ui.Installing = $false
+    $LdSync.StopAfterCurrent = $false
+
+    $summary = Get-LdSummary -Results $ui.Results
+    $skipped = @($ui.Results.Values | Where-Object { $_.Status -eq 'Skipped' } | ForEach-Object { $_.Name } | Sort-Object)
+    $lines = @()
+    if ($summary.Installed.Count) { $lines += "Installed ($($summary.Installed.Count)): $($summary.Installed -join ', ')" }
+    if ($summary.Already.Count) { $lines += "Already installed ($($summary.Already.Count)): $($summary.Already -join ', ')" }
+    if ($summary.Failed.Count) { $lines += "Failed ($($summary.Failed.Count)): $($summary.Failed -join ', ') - use Retry next to each one" }
+    if ($skipped.Count) { $lines += "Skipped ($($skipped.Count)): $($skipped -join ', ')" }
+    $ui.SummaryText.Text = $lines -join "`n"
+    $ui.SummaryBox.Visibility = 'Visible'
+    $ui.ProgressText.Text = if ($Data.Stopped) { 'Stopped' } elseif ($summary.Failed.Count) { 'Finished, with problems' } else { 'All done' }
+    $ui.StopButton.Visibility = 'Collapsed'
+    $ui.StopButton.Content = 'Stop after this app'
+    $ui.BackButton.Visibility = 'Visible'
+    $ui.DoneButton.Visibility = 'Visible'
+    Write-LdLog ("Install finished. " + ($lines -join ' | '))
+    if ($ui.CloseWhenDone) { $ui.Window.Close() }
+}
+
+# Back to the app list, re-checking what is installed now.
+function Show-LdMainView {
+    $ui = $script:Ui
+    $ui.InstallView.Visibility = 'Collapsed'
+    $ui.MainView.Visibility = 'Visible'
+    $ui.WingetChecked = $false
+    $ui.WingetDot.Fill = Get-LdBrush 'SubText'
+    $ui.WingetText.Text = 'Checking which apps are installed...'
+    Update-LdCounter
+    Start-LdWorker -ScriptBlock { Send-LdEvent -Type 'Winget' -Data (Get-LdWingetState) }
+}
+
 function Invoke-LdEvents {
     $evt = $null
     while ($LdSync.Events.TryDequeue([ref]$evt)) {
         try {
             switch ($evt.Type) {
-                'Catalog'    { Initialize-LdCatalog -Data $evt.Data }
-                'Winget'     { Set-LdWingetState -State $evt.Data }
-                'LoadFailed' { Show-LdError -Message $evt.Data; $script:Ui.Window.Close() }
-                'Icon'       { Set-LdIcon -Data $evt.Data }
-                'ToolReady'  { Open-LdTool -Data $evt.Data }
-                'ToolFailed' { $script:Ui.ToolStatus.Text = ''; Show-LdError -Message $evt.Data }
-                default      { Write-LdLog "Unknown event: $($evt.Type)" }
+                'Catalog'     { Initialize-LdCatalog -Data $evt.Data }
+                'Winget'      { Set-LdWingetState -State $evt.Data }
+                'LoadFailed'  { Show-LdError -Message $evt.Data; $script:Ui.Window.Close() }
+                'Icon'        { Set-LdIcon -Data $evt.Data }
+                'ToolReady'   { Open-LdTool -Data $evt.Data }
+                'ToolFailed'  { $script:Ui.ToolStatus.Text = ''; Show-LdError -Message $evt.Data }
+                'AppStatus'   { Set-LdRowStatus -Id $evt.Data.Id -Status $evt.Data.Status -Note $evt.Data.Note }
+                'AppOutput'   { Add-LdDetail -Id $evt.Data.Id -Line $evt.Data.Line }
+                'WingetSetup' { Set-LdRowStatus -Id 'winget-setup' -Status $evt.Data.Status }
+                'EngineDone'  { Complete-LdInstall -Data $evt.Data }
+                default       { Write-LdLog "Unknown event: $($evt.Type)" }
             }
         } catch {
             Write-LdLog "Handling '$($evt.Type)' failed: $($_.Exception.Message)"
@@ -1085,13 +1448,16 @@ function New-LdWindow {
 
     $script:Ui = @{
         Window = $window; Practice = [bool]$Practice; LocalDir = $LocalDir; Dark = [bool]$Dark
-        Catalog = $null; Cards = @{}; Sections = @{}; IconTargets = @{}
+        Catalog = $null; Cards = @{}; Sections = @{}; IconTargets = @{}; IconBitmaps = @{}
         Installed = (ConvertFrom-LdWingetExport -Json ''); WingetChecked = $false; Winget = $null
         Muted = $false; ActivePreset = $null; PrevCategory = $null
+        Rows = @{}; Results = @{}; Installing = $false; CloseWhenDone = $false
     }
     foreach ($name in 'MainView', 'SearchBorder', 'SearchBox', 'SearchHint', 'PresetPanel', 'CategoryList', 'CounterText',
                       'SelectAllButton', 'SelectNoneButton', 'CardScroll', 'CardHost', 'LoadingText', 'ToolHost', 'ToolStatus',
-                      'ShortcutButton', 'WingetDot', 'WingetText', 'CloseButton', 'InstallButton') {
+                      'ShortcutButton', 'WingetDot', 'WingetText', 'CloseButton', 'InstallButton',
+                      'InstallView', 'ProgressText', 'ProgressBar', 'SummaryBox', 'SummaryText', 'RowHost', 'DetailsBox',
+                      'DetailsButton', 'OpenLogButton', 'StopButton', 'BackButton', 'DoneButton') {
         $script:Ui[$name] = $window.FindName($name)
     }
     if ($Practice) { $window.Title = "LaunchDeck $([char]0x2014) Practice mode" }
@@ -1107,6 +1473,36 @@ function New-LdWindow {
     $script:Ui.SelectAllButton.Add_Click({ Set-LdVisibleChecked -Value $true })
     $script:Ui.SelectNoneButton.Add_Click({ Set-LdVisibleChecked -Value $false })
     $script:Ui.CloseButton.Add_Click({ $script:Ui.Window.Close() })
+    $script:Ui.InstallButton.Add_Click({ Start-LdInstall })
+    $script:Ui.StopButton.Add_Click({
+        $LdSync.StopAfterCurrent = $true
+        $script:Ui.StopButton.IsEnabled = $false
+        Update-LdProgress
+    })
+    $script:Ui.BackButton.Add_Click({ Show-LdMainView })
+    $script:Ui.DoneButton.Add_Click({ $script:Ui.Window.Close() })
+    $script:Ui.OpenLogButton.Add_Click({
+        if ($LdSync.LogFile -and (Test-Path -LiteralPath $LdSync.LogFile)) { Start-Process -FilePath 'notepad.exe' -ArgumentList "`"$($LdSync.LogFile)`"" }
+    })
+    $script:Ui.DetailsButton.Add_Click({
+        $show = $script:Ui.DetailsBox.Visibility -ne 'Visible'
+        $script:Ui.DetailsBox.Visibility = if ($show) { 'Visible' } else { 'Collapsed' }
+        $script:Ui.DetailsButton.Content = if ($show) { 'Hide details' } else { 'Show details' }
+    })
+    # Never kill winget mid-install: offer to close once the current app is done.
+    $window.Add_Closing({
+        param($sender, $e)
+        $ui = $script:Ui
+        if (-not $ui.Installing -or $ui.CloseWhenDone) { return }
+        $answer = [System.Windows.MessageBox]::Show("An app is still installing.`n`nClose LaunchDeck as soon as the current app is finished?", 'LaunchDeck', 'YesNo', 'Question')
+        if ($answer -eq 'Yes') {
+            $ui.CloseWhenDone = $true
+            $LdSync.StopAfterCurrent = $true
+            $ui.StopButton.IsEnabled = $false
+            Update-LdProgress
+        }
+        $e.Cancel = $true
+    })
 
     $timer = New-Object Windows.Threading.DispatcherTimer
     $timer.Interval = [TimeSpan]::FromMilliseconds(80)

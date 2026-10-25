@@ -51,5 +51,6 @@ if ($Action) {
     Wait-Dispatcher $ActionSeconds
     Save-Shot ([IO.Path]::ChangeExtension($Out, '.after.png'))
 }
+$script:Ui.CloseWhenDone = $true   # skip the "still installing, close?" question
 $window.Close()
 Get-Content (Join-Path $env:TEMP 'launchdeck-snap.log') -Tail 8

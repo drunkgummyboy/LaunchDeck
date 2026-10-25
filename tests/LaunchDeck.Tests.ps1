@@ -229,6 +229,61 @@ Test-It 'Test-LdImageFile rejects text file' {
     finally { Remove-Item -LiteralPath $good -ErrorAction SilentlyContinue }
 }
 
+# ---------------- Task 4: install engine ----------------
+
+function New-FakeApp([string]$Name) { [pscustomobject]@{ Name = $Name; Id = "Fake.$Name"; Category = 'Other'; Icon = ''; Source = '' } }
+
+function Get-FinalStatuses {
+    $events = @()
+    $evt = $null
+    while ($LdSync.Events.TryDequeue([ref]$evt)) { $events += $evt }
+    @{
+        Final = @($events | Where-Object { $_.Type -eq 'AppStatus' -and $_.Data.Status -ne 'Installing' })
+        Done  = @($events | Where-Object { $_.Type -eq 'EngineDone' })
+        Last  = $events[-1]
+    }
+}
+
+Test-It 'Invoke-LdInstallQueue practice: third app fails once, then retry succeeds' {
+    Initialize-LdSync -LogFile ''
+    foreach ($n in 'One', 'Two', 'Three') { $LdSync.Pending.Enqueue((New-FakeApp $n)) }
+    Invoke-LdInstallQueue -Practice $true -PracticeDelayMs 10
+    $r = Get-FinalStatuses
+    Assert-Equal @('Installed', 'Installed', 'Failed') ($r.Final | ForEach-Object { $_.Data.Status })
+    Assert-Equal 'Simulated failure' $r.Final[2].Data.Note
+    Assert-Equal 'Fake.Three' $r.Final[2].Data.Id
+    Assert-Equal 'EngineDone' $r.Last.Type
+    Assert-True (-not $r.Last.Data.Stopped) 'a full run is not "stopped"'
+
+    $LdSync.Pending.Enqueue((New-FakeApp 'Three'))
+    Invoke-LdInstallQueue -Practice $true -PracticeDelayMs 10
+    $r = Get-FinalStatuses
+    Assert-Equal @('Installed') ($r.Final | ForEach-Object { $_.Data.Status })
+}
+
+Test-It 'Invoke-LdInstallQueue stops after the current app when asked' {
+    Initialize-LdSync -LogFile ''
+    $LdSync.Pending.Enqueue((New-FakeApp 'One'))
+    $LdSync.Pending.Enqueue((New-FakeApp 'Two'))
+    $LdSync.StopAfterCurrent = $true
+    Invoke-LdInstallQueue -Practice $true -PracticeDelayMs 10
+    $r = Get-FinalStatuses
+    Assert-Equal 1 $r.Final.Count
+    Assert-True $r.Last.Data.Stopped 'EngineDone should say it stopped early'
+    Assert-Equal 1 $LdSync.Pending.Count
+}
+
+Test-It 'Test-LdNoiseLine drops winget progress output' {
+    $block = [string][char]0x2588
+    $shade = [string][char]0x2592
+    foreach ($noise in @('', '   ', '  - ', '\', '  |', "  $($block * 10)$($shade * 5)  1.2 MB / 20.5 MB", '  42%')) {
+        Assert-True (Test-LdNoiseLine -Line $noise) "should be noise: [$noise]"
+    }
+    foreach ($keep in @('Successfully installed', 'Found Spotify [Spotify.Spotify] Version 1.2.3', 'Installer failed with exit code: 1603')) {
+        Assert-True (-not (Test-LdNoiseLine -Line $keep)) "should be kept: [$keep]"
+    }
+}
+
 # ---------------- summary ----------------
 Write-Host ''
 Write-Host "$script:Passed passed, $script:Failed failed"
